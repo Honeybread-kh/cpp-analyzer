@@ -1,0 +1,111 @@
+# C++ Configuration Pattern Definitions
+# These patterns define how the analyzer detects config key access in source code.
+# Each pattern specifies:
+#   - name: human-readable name
+#   - type: category of config pattern
+#   - description: what it detects
+#   - regex: pattern to find in source text (applied per-line)
+#   - key_group: regex capture group index that contains the config key name
+
+patterns:
+  - name: "getenv"
+    type: ENV_VAR
+    description: "POSIX getenv() call"
+    regex: 'getenv\s*\(\s*"([^"]+)"'
+    key_group: 1
+
+  - name: "std::getenv"
+    type: ENV_VAR
+    description: "std::getenv() call"
+    regex: 'std::getenv\s*\(\s*"([^"]+)"'
+    key_group: 1
+
+  - name: "map_bracket"
+    type: CONFIG_MAP
+    description: "Map/dict-style bracket access: config[\"key\"]"
+    regex: '(?:config|cfg|settings|options|params|conf)\s*\[\s*"([^"]+)"'
+    key_group: 1
+
+  - name: "map_get"
+    type: CONFIG_MAP
+    description: "Map get() method: config.get(\"key\")"
+    regex: '(?:config|cfg|settings|options|params|conf)\.get\s*\(\s*"([^"]+)"'
+    key_group: 1
+
+  - name: "map_at"
+    type: CONFIG_MAP
+    description: "Map at() method: config.at(\"key\")"
+    regex: '(?:config|cfg|settings|options|params|conf)\.at\s*\(\s*"([^"]+)"'
+    key_group: 1
+
+  - name: "gflags_define_bool"
+    type: GFLAGS
+    description: "Google gflags DEFINE_bool"
+    regex: 'DEFINE_bool\s*\(\s*(\w+)'
+    key_group: 1
+
+  - name: "gflags_define_int"
+    type: GFLAGS
+    description: "Google gflags DEFINE_int32/int64"
+    regex: 'DEFINE_int(?:32|64)\s*\(\s*(\w+)'
+    key_group: 1
+
+  - name: "gflags_define_string"
+    type: GFLAGS
+    description: "Google gflags DEFINE_string"
+    regex: 'DEFINE_string\s*\(\s*(\w+)'
+    key_group: 1
+
+  - name: "gflags_usage"
+    type: GFLAGS
+    description: "Google gflags FLAGS_ usage"
+    regex: 'FLAGS_(\w+)'
+    key_group: 1
+
+  - name: "boost_program_options"
+    type: CLI_ARG
+    description: "Boost.ProgramOptions vm[\"key\"]"
+    regex: 'vm\s*\[\s*"([^"]+)"'
+    key_group: 1
+
+  - name: "boost_po_count"
+    type: CLI_ARG
+    description: "Boost.ProgramOptions vm.count(\"key\")"
+    regex: 'vm\.count\s*\(\s*"([^"]+)"'
+    key_group: 1
+
+  - name: "nlohmann_json"
+    type: JSON_CONFIG
+    description: "nlohmann::json bracket or at access"
+    regex: '(?:j|json|config_json|cfg_json)\s*(?:\[|\.at\s*\()\s*"([^"]+)"'
+    key_group: 1
+
+  - name: "yaml_cpp"
+    type: YAML_CONFIG
+    description: "yaml-cpp node access"
+    regex: '(?:node|config|yaml)\s*\[\s*"([^"]+)"'
+    key_group: 1
+
+  - name: "absl_flags"
+    type: CLI_ARG
+    description: "Abseil flags absl::GetFlag(FLAGS_x)"
+    regex: 'absl::GetFlag\s*\(\s*FLAGS_(\w+)'
+    key_group: 1
+
+  - name: "cli11_option"
+    type: CLI_ARG
+    description: "CLI11 add_option/add_flag"
+    regex: 'add_(?:option|flag)\s*\(\s*"--?([^"]+)"'
+    key_group: 1
+
+  - name: "define_macro"
+    type: PREPROCESSOR
+    description: "#define configuration macros"
+    regex: '^#define\s+((?:ENABLE_|DISABLE_|USE_|CONFIG_|FEATURE_)\w+)'
+    key_group: 1
+
+  - name: "ifdef_config"
+    type: PREPROCESSOR
+    description: "#ifdef/#ifndef for feature flags"
+    regex: '^#ifn?def\s+((?:ENABLE_|DISABLE_|USE_|CONFIG_|FEATURE_)\w+)'
+    key_group: 1

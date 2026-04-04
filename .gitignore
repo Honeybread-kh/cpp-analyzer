@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+*.egg
+
+# uv
+uv.lock
+
+# DB files (generated at runtime)
+*.db
+*.db-wal
+*.db-shm
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# Test artifacts
+test.db
