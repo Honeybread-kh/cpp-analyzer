@@ -38,6 +38,10 @@ class Indexer:
         files = self._collect_files()
         total = len(files)
 
+        # Disable FK checks during indexing to avoid INSERT OR REPLACE
+        # cascading deletes when USR collisions occur across files
+        self.repo.set_foreign_keys(False)
+
         for i, path in enumerate(files, 1):
             self.progress_cb(str(path), i, total)
             rel = str(path.relative_to(self.root))
@@ -127,6 +131,7 @@ class Indexer:
             if result.errors:
                 stats.parse_errors.append((rel, result.errors))
 
+        self.repo.set_foreign_keys(True)
         self.repo.touch_project(self.project_id)
         return stats
 

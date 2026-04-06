@@ -417,6 +417,172 @@ def search_symbols(
     return "\n".join(lines)
 
 
+# ── config dependency analysis tools ─────────────────────────────────────────
+
+@mcp.tool()
+def analyze_configs(
+    db_path: str | None = None,
+    project_id: int | None = None,
+    target_structs: str | None = None,
+    output_dir: str | None = None,
+    output_format: str = "all",
+) -> str:
+    """
+    Analyze C++ config parameters, their dependencies, and forced overrides.
+    Extracts struct fields, CLI argument mappings, default values,
+    and inter-config dependencies (overrides, cascades, mutual exclusions).
+
+    Outputs CSV files and/or KConfig description.
+
+    Args:
+        db_path:        SQLite DB path (default: cpp_analysis.db).
+        project_id:     Project ID (default: first project).
+        target_structs: Comma-separated struct names to analyze (default: auto-detect all).
+        output_dir:     Directory for CSV/KConfig output (default: ./config_analysis/).
+        output_format:  "csv", "kconfig", or "all" (default: "all").
+
+    Returns:
+        Summary of analysis and paths to generated files.
+    """
+    from .analysis.config_dependency import ConfigDependencyAnalyzer
+    from .analysis.csv_exporter import export_csv, export_kconfig, generate_kconfig
+
+    db   = _default_db(db_path)
+    repo = _repo(db)
+    pid  = _resolve_project_id(repo, project_id)
+    if pid is None:
+        repo.close()
+        return "No project found. Run index_project first."
+
+    project = repo.get_project(pid)
+    project_name = project["name"] if project else "unknown"
+
+    structs = [s.strip() for s in target_structs.split(",")] if target_structs else []
+
+    analyzer = ConfigDependencyAnalyzer(repo, pid, target_structs=structs)
+    result = analyzer.analyze()
+    repo.close()
+
+    default_out = str(Path(__file__).parents[1] / "output" / project_name)
+    out = output_dir or default_out
+
+    lines = [
+        f"Config Analysis for '{project_name}'",
+        f"  Configs found      : {len(result.configs)}",
+        f"  Dependencies found : {len(result.dependencies)}",
+        "",
+    ]
+
+    # count by type
+    by_type: dict[str, int] = {}
+    for d in result.dependencies:
+        by_type[d.relationship_type] = by_type.get(d.relationship_type, 0) + 1
+    if by_type:
+        lines.append("  Dependency breakdown:")
+        for t, count in sorted(by_type.items()):
+            lines.append(f"    {t:<25}: {count}")
+        lines.append("")
+
+    if output_format in ("csv", "all"):
+        paths = export_csv(result.configs, result.dependencies, out)
+        for name, path in paths.items():
+            lines.append(f"  Written: {path}")
+
+    if output_format in ("kconfig", "all"):
+        kpath = export_kconfig(result.configs, result.dependencies, out, project_name)
+        lines.append(f"  Written: {kpath}")
+
+    # also include a short preview
+    if result.configs:
+        lines.append("")
+        lines.append("Top configs (first 10):")
+        for cfg in result.configs[:10]:
+            flag = f" (cli: {cfg.cli_flag})" if cfg.cli_flag else ""
+            default = f" = {cfg.default_value}" if cfg.default_value else ""
+            lines.append(f"  {cfg.qualified_name}{default}{flag}")
+
+    if result.dependencies:
+        lines.append("")
+        lines.append("Sample dependencies (first 10):")
+        for dep in result.dependencies[:10]:
+            lines.append(
+                f"  [{dep.relationship_type}] {dep.source_config} "
+                f"{dep.source_condition} → {dep.target_config} = {dep.forced_value}"
+            )
+
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def export_configs_csv(
+    db_path: str | None = None,
+    project_id: int | None = None,
+    target_structs: str | None = None,
+) -> str:
+    """
+    Run config analysis and return results as inline CSV text.
+    Useful when you want the raw data without writing files.
+
+    Args:
+        db_path:        SQLite DB path.
+        project_id:     Project ID.
+        target_structs: Comma-separated struct names to analyze.
+    """
+    from .analysis.config_dependency import ConfigDependencyAnalyzer
+    from .analysis.csv_exporter import export_csv_string
+
+    db   = _default_db(db_path)
+    repo = _repo(db)
+    pid  = _resolve_project_id(repo, project_id)
+    if pid is None:
+        repo.close()
+        return "No project found. Run index_project first."
+
+    structs = [s.strip() for s in target_structs.split(",")] if target_structs else []
+    analyzer = ConfigDependencyAnalyzer(repo, pid, target_structs=structs)
+    result = analyzer.analyze()
+    repo.close()
+
+    return export_csv_string(result.configs, result.dependencies)
+
+
+@mcp.tool()
+def export_configs_kconfig(
+    db_path: str | None = None,
+    project_id: int | None = None,
+    target_structs: str | None = None,
+) -> str:
+    """
+    Run config analysis and return results as KConfig format text.
+    KConfig is the Linux Kernel configuration language, ideal for
+    expressing config dependencies (depends on, select, range, default).
+
+    Args:
+        db_path:        SQLite DB path.
+        project_id:     Project ID.
+        target_structs: Comma-separated struct names to analyze.
+    """
+    from .analysis.config_dependency import ConfigDependencyAnalyzer
+    from .analysis.csv_exporter import generate_kconfig
+
+    db   = _default_db(db_path)
+    repo = _repo(db)
+    pid  = _resolve_project_id(repo, project_id)
+    if pid is None:
+        repo.close()
+        return "No project found. Run index_project first."
+
+    project = repo.get_project(pid)
+    project_name = project["name"] if project else "unknown"
+
+    structs = [s.strip() for s in target_structs.split(",")] if target_structs else []
+    analyzer = ConfigDependencyAnalyzer(repo, pid, target_structs=structs)
+    result = analyzer.analyze()
+    repo.close()
+
+    return generate_kconfig(result.configs, result.dependencies, project_name)
+
+
 # ── entry point ───────────────────────────────────────────────────────────────
 
 def main():

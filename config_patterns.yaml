@@ -109,3 +109,37 @@ patterns:
     description: "#ifdef/#ifndef for feature flags"
     regex: '^#ifn?def\s+((?:ENABLE_|DISABLE_|USE_|CONFIG_|FEATURE_)\w+)'
     key_group: 1
+
+  # ── CLI argument parsers ────────────────────────────────────────────────────
+
+  - name: "keymatch"
+    type: CLI_ARG
+    description: "libjpeg/turbojpeg keymatch() CLI arg parser"
+    regex: 'keymatch\s*\(\s*\w+\s*,\s*"([^"]+)"'
+    key_group: 1
+
+  - name: "getopt_long_option"
+    type: CLI_ARG
+    description: "POSIX getopt_long option table entry"
+    regex: '\{\s*"([^"]+)"\s*,\s*(no_argument|required_argument|optional_argument)'
+    key_group: 1
+
+  - name: "getopt_short"
+    type: CLI_ARG
+    description: "getopt() short option switch case"
+    regex: "case\\s+'(\\w)'"
+    key_group: 1
+
+  - name: "strcmp_argv"
+    type: CLI_ARG
+    description: "Manual strcmp/strncmp argv comparison"
+    regex: 'strn?cmp\s*\(\s*argv\s*\[\s*\w+\s*\]\s*,\s*"--?([^"]+)"'
+    key_group: 1
+
+  # ── struct field assignment ─────────────────────────────────────────────────
+
+  - name: "struct_ptr_assign"
+    type: STRUCT_FIELD
+    description: "Struct pointer field assignment (ptr->field = value)"
+    regex: '(\w+)->(\w+)\s*=\s*(.+?)\s*;'
+    key_group: 2

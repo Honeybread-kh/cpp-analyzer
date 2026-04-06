@@ -25,6 +25,15 @@ class Repository:
         self._conn.execute("PRAGMA foreign_keys = ON")
         self._apply_schema()
 
+    def set_foreign_keys(self, enabled: bool) -> None:
+        """Enable or disable foreign key enforcement on the current connection.
+
+        PRAGMA foreign_keys can only be changed outside of a transaction,
+        so we commit any pending transaction first.
+        """
+        self._conn.commit()
+        self._conn.execute(f"PRAGMA foreign_keys = {'ON' if enabled else 'OFF'}")
+
     def close(self) -> None:
         if self._conn:
             self._conn.close()
@@ -153,6 +162,14 @@ class Repository:
         usr: str,
     ) -> int:
         with self.transaction() as c:
+            # Validate parent_id exists to avoid FK violation
+            if parent_id is not None:
+                exists = c.execute(
+                    "SELECT 1 FROM symbols WHERE id=?", (parent_id,)
+                ).fetchone()
+                if not exists:
+                    parent_id = None
+
             cur = c.execute(
                 """INSERT OR REPLACE INTO symbols(
                        file_id, name, qualified_name, kind, signature,
