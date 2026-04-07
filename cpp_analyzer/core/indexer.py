@@ -91,6 +91,7 @@ class Indexer:
                     visibility     = sym.visibility,
                     return_type    = sym.return_type,
                     usr            = sym.usr,
+                    template_params= sym.template_params,
                 )
                 usr_to_id[sym.usr] = sym_id
 
@@ -113,6 +114,7 @@ class Indexer:
                     call_line    = call.line,
                     call_col     = call.col,
                     code_snippet = call.code_snippet,
+                    call_type    = call.call_type,
                 )
 
             # --- includes
@@ -123,6 +125,26 @@ class Indexer:
                     included_path    = inc.included_path,
                     line             = inc.line,
                     is_system        = inc.is_system,
+                )
+
+            # --- class inheritance
+            for inh in result.inherits:
+                class_db_id = usr_to_id.get(inh.class_usr)
+                if class_db_id is None:
+                    class_db_id = self.repo.resolve_symbol_id(inh.class_usr)
+                if class_db_id is None:
+                    continue
+                base_db_id = None
+                if inh.base_usr:
+                    base_db_id = usr_to_id.get(inh.base_usr) or \
+                                 self.repo.resolve_symbol_id(inh.base_usr)
+                self.repo.insert_inheritance(
+                    class_symbol_id = class_db_id,
+                    base_class_name = inh.base_name,
+                    base_class_usr  = inh.base_usr,
+                    base_class_id   = base_db_id,
+                    access          = inh.access,
+                    is_virtual      = inh.is_virtual,
                 )
 
             stats.indexed += 1

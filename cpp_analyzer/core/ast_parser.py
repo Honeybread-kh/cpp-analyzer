@@ -36,6 +36,7 @@ class SymbolInfo:
     visibility: str                  # public | private | protected | ""
     return_type: str
     usr: str                         # Unified Symbol Resolution (clang unique ID)
+    template_params: str = ""        # e.g. "typename T, int N"
 
 
 @dataclass
@@ -46,6 +47,7 @@ class CallInfo:
     line: int
     col: int
     code_snippet: str
+    call_type: str = "direct"        # direct | indirect
 
 
 @dataclass
@@ -56,6 +58,15 @@ class IncludeInfo:
 
 
 @dataclass
+class InheritanceInfo:
+    class_usr: str
+    base_name: str
+    base_usr: Optional[str]
+    access: str                      # public | protected | private | ""
+    is_virtual: bool = False
+
+
+@dataclass
 class ParseResult:
     file_path: str
     file_hash: str
@@ -63,6 +74,7 @@ class ParseResult:
     symbols: list[SymbolInfo] = field(default_factory=list)
     calls: list[CallInfo] = field(default_factory=list)
     includes: list[IncludeInfo] = field(default_factory=list)
+    inherits: list[InheritanceInfo] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     used_fallback: bool = False
 
@@ -83,6 +95,7 @@ def _build_kind_map():
             ci.CursorKind.STRUCT_DECL.value:           "STRUCT",
             ci.CursorKind.CLASS_TEMPLATE.value:        "CLASS_TEMPLATE",
             ci.CursorKind.FUNCTION_TEMPLATE.value:     "FUNCTION_TEMPLATE",
+            ci.CursorKind.CLASS_TEMPLATE_PARTIAL_SPECIALIZATION.value: "CLASS_TEMPLATE_PARTIAL_SPECIALIZATION",
             ci.CursorKind.VAR_DECL.value:              "VARIABLE",
             ci.CursorKind.FIELD_DECL.value:            "FIELD",
             ci.CursorKind.ENUM_DECL.value:             "ENUM",
@@ -116,6 +129,9 @@ def _qualified_name(cursor) -> str:
     while c and c.kind.is_translation_unit() is False:
         if c.spelling:
             parts.append(c.spelling)
+        else:
+            # Anonymous namespace / struct / class
+            parts.append("(anonymous)")
         c = c.semantic_parent
         if c and c.kind.is_translation_unit():
             break
@@ -123,14 +139,20 @@ def _qualified_name(cursor) -> str:
 
 
 def _namespace_path(cursor) -> str:
-    """Return only namespace portions, not the symbol itself."""
+    """Return namespace + class scope path, not the symbol itself."""
     try:
         import clang.cindex as ci
+        _SCOPE_KINDS = {
+            ci.CursorKind.NAMESPACE,
+            ci.CursorKind.CLASS_DECL,
+            ci.CursorKind.STRUCT_DECL,
+            ci.CursorKind.CLASS_TEMPLATE,
+        }
         parts = []
         c = cursor.semantic_parent
         while c and not c.kind.is_translation_unit():
-            if c.kind == ci.CursorKind.NAMESPACE and c.spelling:
-                parts.append(c.spelling)
+            if c.kind in _SCOPE_KINDS:
+                parts.append(c.spelling if c.spelling else "(anonymous)")
             c = c.semantic_parent
         return "::".join(reversed(parts))
     except Exception:
@@ -142,6 +164,7 @@ def _namespace_path(cursor) -> str:
 _SYMBOL_KINDS: set[int] = set()
 _FUNC_KINDS: set[int] = set()
 _CLASS_KINDS: set[int] = set()
+_TEMPLATE_KINDS: set[int] = set()
 
 
 def _init_kind_sets():
@@ -155,6 +178,7 @@ def _init_kind_sets():
             ci.CursorKind.CLASS_DECL.value,
             ci.CursorKind.STRUCT_DECL.value,
             ci.CursorKind.CLASS_TEMPLATE.value,
+            ci.CursorKind.CLASS_TEMPLATE_PARTIAL_SPECIALIZATION.value,
             ci.CursorKind.FUNCTION_TEMPLATE.value,
             ci.CursorKind.VAR_DECL.value,
             ci.CursorKind.FIELD_DECL.value,
@@ -174,9 +198,42 @@ def _init_kind_sets():
             ci.CursorKind.CLASS_DECL.value,
             ci.CursorKind.STRUCT_DECL.value,
             ci.CursorKind.CLASS_TEMPLATE.value,
+            ci.CursorKind.CLASS_TEMPLATE_PARTIAL_SPECIALIZATION.value,
+        })
+        _TEMPLATE_KINDS.update({
+            ci.CursorKind.CLASS_TEMPLATE.value,
+            ci.CursorKind.CLASS_TEMPLATE_PARTIAL_SPECIALIZATION.value,
+            ci.CursorKind.FUNCTION_TEMPLATE.value,
         })
     except ImportError:
         pass
+
+
+def _extract_template_params(cursor) -> str:
+    """Collect template parameter names from a template cursor.
+
+    Returns a string like ``"typename T, int N"`` or ``""`` if none found.
+    """
+    try:
+        import clang.cindex as ci
+        _TPARAM_KINDS = {
+            ci.CursorKind.TEMPLATE_TYPE_PARAMETER,
+            ci.CursorKind.TEMPLATE_NON_TYPE_PARAMETER,
+            ci.CursorKind.TEMPLATE_TEMPLATE_PARAMETER,
+        }
+        params: list[str] = []
+        for child in cursor.get_children():
+            if child.kind in _TPARAM_KINDS:
+                if child.kind == ci.CursorKind.TEMPLATE_TYPE_PARAMETER:
+                    params.append(f"typename {child.spelling}" if child.spelling else "typename")
+                elif child.kind == ci.CursorKind.TEMPLATE_NON_TYPE_PARAMETER:
+                    type_str = child.type.spelling if child.type else ""
+                    params.append(f"{type_str} {child.spelling}".strip())
+                else:
+                    params.append(f"template {child.spelling}" if child.spelling else "template")
+        return ", ".join(params)
+    except Exception:
+        return ""
 
 
 class ClangParser:
@@ -273,6 +330,11 @@ class ClangParser:
             except Exception:
                 ret_type = ""
 
+            # Collect template parameters for template kinds
+            tpl_params = ""
+            if kind_val in _TEMPLATE_KINDS:
+                tpl_params = _extract_template_params(cursor)
+
             sym = SymbolInfo(
                 name          = cursor.spelling,
                 qualified_name= _qualified_name(cursor),
@@ -288,6 +350,7 @@ class ClangParser:
                 visibility    = _visibility(cursor),
                 return_type   = ret_type,
                 usr           = cursor.get_usr(),
+                template_params= tpl_params,
             )
             result.symbols.append(sym)
 
@@ -299,6 +362,8 @@ class ClangParser:
             called = cursor.referenced
             callee_name = cursor.spelling or (called.spelling if called else "")
             callee_usr  = (called.get_usr() if called else None) or None
+            # Determine call type: indirect if callee is unresolved
+            call_type = "indirect" if called is None else "direct"
             snippet = ""
             if loc.line > 0 and loc.line <= len(lines):
                 snippet = lines[loc.line - 1].strip()
@@ -309,7 +374,26 @@ class ClangParser:
                 line         = loc.line,
                 col          = loc.column,
                 code_snippet = snippet,
+                call_type    = call_type,
             ))
+
+        # ── emit inheritance ──────────────────────────────────────────────────
+        elif cursor.kind == ci.CursorKind.CXX_BASE_SPECIFIER:
+            parent = cursor.semantic_parent
+            if parent and parent.kind.value in _CLASS_KINDS:
+                class_usr = parent.get_usr()
+                base_name = cursor.spelling or cursor.displayname or ""
+                base_def = cursor.referenced
+                base_usr = (base_def.get_usr() if base_def else None) or None
+                access = _visibility(cursor)
+                is_virtual = cursor.is_virtual_base() if hasattr(cursor, "is_virtual_base") else False
+                result.inherits.append(InheritanceInfo(
+                    class_usr  = class_usr,
+                    base_name  = base_name,
+                    base_usr   = base_usr,
+                    access     = access,
+                    is_virtual = is_virtual,
+                ))
 
         for child in cursor.get_children():
             self._walk(child, file_path, lines, result, current_func_usr)

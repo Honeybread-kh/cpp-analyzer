@@ -138,6 +138,12 @@ class Repository:
             c.execute("DELETE FROM calls WHERE call_file_id=?", (file_id,))
             c.execute("DELETE FROM config_sources WHERE file_id=?", (file_id,))
             c.execute("DELETE FROM config_usages WHERE file_id=?", (file_id,))
+            c.execute(
+                """DELETE FROM class_inheritance
+                   WHERE class_symbol_id IN
+                       (SELECT id FROM symbols WHERE file_id=?)""",
+                (file_id,),
+            )
             c.execute("DELETE FROM symbols WHERE file_id=?", (file_id,))
             c.execute("DELETE FROM includes WHERE file_id=?", (file_id,))
 
@@ -160,6 +166,8 @@ class Repository:
         visibility: str,
         return_type: str,
         usr: str,
+        *,
+        template_params: str = "",
     ) -> int:
         with self.transaction() as c:
             # Validate parent_id exists to avoid FK violation
@@ -175,13 +183,15 @@ class Repository:
                        file_id, name, qualified_name, kind, signature,
                        line_start, line_end, col_start,
                        is_definition, is_declaration,
-                       parent_id, namespace_path, visibility, return_type, usr)
-                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                       parent_id, namespace_path, visibility, return_type, usr,
+                       template_params)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     file_id, name, qualified_name, kind, signature,
                     line_start, line_end, col_start,
                     int(is_definition), int(is_declaration),
                     parent_id, namespace_path, visibility, return_type, usr,
+                    template_params or None,
                 ),
             )
             return cur.lastrowid
@@ -239,15 +249,19 @@ class Repository:
         call_line: int,
         call_col: int,
         code_snippet: str,
+        *,
+        call_type: str = "direct",
     ) -> None:
         with self.transaction() as c:
             c.execute(
                 """INSERT OR IGNORE INTO calls(
                        caller_id, callee_name, callee_id,
-                       call_file_id, call_line, call_col, code_snippet)
-                   VALUES(?,?,?,?,?,?,?)""",
+                       call_file_id, call_line, call_col, code_snippet,
+                       call_type)
+                   VALUES(?,?,?,?,?,?,?,?)""",
                 (caller_id, callee_name, callee_id,
-                 call_file_id, call_line, call_col, code_snippet),
+                 call_file_id, call_line, call_col, code_snippet,
+                 call_type),
             )
 
     def get_callees(self, symbol_id: int) -> list[sqlite3.Row]:
@@ -271,6 +285,53 @@ class Repository:
                JOIN files   f ON s.file_id   = f.id
                WHERE c.callee_id = ?
                ORDER BY c.call_line""",
+            (symbol_id,),
+        ).fetchall()
+
+    # ── class inheritance ──────────────────────────────────────────────────
+
+    def insert_inheritance(
+        self,
+        class_symbol_id: int,
+        base_class_name: str,
+        base_class_usr: str | None = None,
+        base_class_id: int | None = None,
+        access: str = "",
+        is_virtual: bool = False,
+    ) -> None:
+        with self.transaction() as c:
+            c.execute(
+                """INSERT OR IGNORE INTO class_inheritance(
+                       class_symbol_id, base_class_name, base_class_usr,
+                       base_class_id, access, is_virtual)
+                   VALUES(?,?,?,?,?,?)""",
+                (class_symbol_id, base_class_name, base_class_usr,
+                 base_class_id, access, int(is_virtual)),
+            )
+
+    def get_base_classes(self, symbol_id: int) -> list[sqlite3.Row]:
+        """Return base classes of a given class symbol."""
+        return self._conn.execute(
+            """SELECT ci.*, s.qualified_name AS base_qname,
+                      f.relative_path AS base_file
+               FROM class_inheritance ci
+               LEFT JOIN symbols s ON ci.base_class_id = s.id
+               LEFT JOIN files   f ON s.file_id        = f.id
+               WHERE ci.class_symbol_id = ?
+               ORDER BY ci.base_class_name""",
+            (symbol_id,),
+        ).fetchall()
+
+    def get_derived_classes(self, symbol_id: int) -> list[sqlite3.Row]:
+        """Return derived classes of a given class symbol."""
+        return self._conn.execute(
+            """SELECT ci.*, s.qualified_name AS derived_qname,
+                      f.relative_path AS derived_file
+               FROM class_inheritance ci
+               JOIN symbols s ON ci.class_symbol_id = s.id
+               JOIN files   f ON s.file_id          = f.id
+               WHERE ci.base_class_id = ?
+               ORDER BY s.qualified_name""",
             (symbol_id,),
         ).fetchall()
 
@@ -300,6 +361,101 @@ class Repository:
                    VALUES(?,?,?,?,?)""",
                 (file_id, included_file_id, included_path, line, int(is_system)),
             )
+
+    def resolve_include_file_ids(self, project_id: int) -> int:
+        """Match included_path to files.relative_path and UPDATE included_file_id.
+
+        Uses basename or suffix matching for flexibility.
+        Returns the number of resolved includes.
+        """
+        # Get all unresolved includes for this project
+        unresolved = self._conn.execute(
+            """SELECT i.id, i.included_path
+               FROM includes i
+               JOIN files f ON i.file_id = f.id
+               WHERE f.project_id = ? AND i.included_file_id IS NULL
+                 AND i.is_system = 0""",
+            (project_id,),
+        ).fetchall()
+
+        if not unresolved:
+            return 0
+
+        # Build lookup from relative_path and basename
+        files = self._conn.execute(
+            "SELECT id, relative_path FROM files WHERE project_id=?",
+            (project_id,),
+        ).fetchall()
+
+        # suffix -> file_id (last component match, then full suffix match)
+        basename_map: dict[str, list[int]] = {}
+        relpath_map: dict[str, int] = {}
+        for f in files:
+            rp = f["relative_path"]
+            relpath_map[rp] = f["id"]
+            import os
+            bn = os.path.basename(rp)
+            basename_map.setdefault(bn, []).append(f["id"])
+
+        resolved = 0
+        with self.transaction() as c:
+            for row in unresolved:
+                inc_path = row["included_path"]
+                fid: int | None = None
+
+                # 1. Exact relative_path match
+                if inc_path in relpath_map:
+                    fid = relpath_map[inc_path]
+                else:
+                    # 2. Suffix match: find files whose relative_path ends with inc_path
+                    for rp, rid in relpath_map.items():
+                        if rp.endswith("/" + inc_path) or rp == inc_path:
+                            fid = rid
+                            break
+
+                    # 3. Basename match
+                    if fid is None:
+                        bn = os.path.basename(inc_path)
+                        candidates = basename_map.get(bn, [])
+                        if len(candidates) == 1:
+                            fid = candidates[0]
+
+                if fid is not None:
+                    c.execute(
+                        "UPDATE includes SET included_file_id=? WHERE id=?",
+                        (fid, row["id"]),
+                    )
+                    resolved += 1
+
+        return resolved
+
+    def all_includes(self, project_id: int, include_system: bool = False) -> list[sqlite3.Row]:
+        """Return all include edges for a project (file_id -> included_file_id).
+
+        Only returns rows where included_file_id is resolved (not NULL).
+        """
+        sql = """SELECT i.file_id, i.included_file_id, i.included_path, i.is_system
+                 FROM includes i
+                 JOIN files f ON i.file_id = f.id
+                 WHERE f.project_id = ? AND i.included_file_id IS NOT NULL"""
+        if not include_system:
+            sql += " AND i.is_system = 0"
+        return self._conn.execute(sql, (project_id,)).fetchall()
+
+    def get_file_by_path(self, project_id: int, path_pattern: str) -> list[sqlite3.Row]:
+        """Search files by path pattern (LIKE match on relative_path)."""
+        return self._conn.execute(
+            """SELECT * FROM files
+               WHERE project_id = ? AND relative_path LIKE ?
+               ORDER BY relative_path""",
+            (project_id, f"%{path_pattern}%"),
+        ).fetchall()
+
+    def get_file(self, file_id: int) -> sqlite3.Row | None:
+        """Get a single file by ID."""
+        return self._conn.execute(
+            "SELECT * FROM files WHERE id=?", (file_id,)
+        ).fetchone()
 
     # ── config patterns ───────────────────────────────────────────────────────
 

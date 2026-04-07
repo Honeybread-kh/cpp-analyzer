@@ -28,6 +28,7 @@ from ..db.repository import Repository
 from ..analysis.config_tracker import ConfigTracker
 from ..analysis.call_graph import CallGraph
 from ..analysis.path_tracer import PathTracer, PathNode
+from ..analysis.dependency_graph import DependencyGraph, FileNode
 
 console = Console()
 
@@ -475,3 +476,111 @@ def who(function_name, db, project_id, direction, depth):
                       sym["relative_path"], str(sym["line_start"] or ""))
     console.print(t)
     repo.close()
+
+
+# ── deps ─────────────────────────────────────────────────────────────────────
+
+@cli.command()
+@click.argument("file_path", required=False, default=None)
+@click.option("--db",           default=DEFAULT_DB, show_default=True)
+@click.option("--project-id",   default=None, type=int)
+@click.option("--direction",    default="includes",
+              type=click.Choice(["includes", "included-by"]), show_default=True,
+              help="includes = what this file includes; included-by = who includes it")
+@click.option("--depth",        default=3, show_default=True)
+@click.option("--circular",     is_flag=True, help="Detect circular dependencies")
+@click.option("--top",          default=None, type=int,
+              help="Show top N most-included and most-including files")
+@click.option("--show-system",  is_flag=True, help="Include system headers")
+def deps(file_path, db, project_id, direction, depth, circular, top, show_system):
+    """Show file dependency (include) relationships.
+
+    Without FILE_PATH, use --circular or --top for project-wide analysis.
+    With FILE_PATH, display the include tree rooted at that file.
+    """
+    repo = _get_repo(db)
+    pid = _resolve_project(repo, project_id)
+    dg = DependencyGraph(repo, pid)
+    dg.build(include_system=show_system)
+
+    if circular:
+        cycles = dg.circular_dependencies()
+        if not cycles:
+            console.print("[green]No circular dependencies found.[/green]")
+        else:
+            table = Table(title=f"Circular Dependencies ({len(cycles)} cycles)")
+            table.add_column("#",     style="dim", width=5, justify="right")
+            table.add_column("Cycle", style="bold red")
+            for i, cycle in enumerate(cycles, 1):
+                parts = []
+                for fid in cycle:
+                    f = repo.get_file(fid)
+                    parts.append(f["relative_path"] if f else f"<id:{fid}>")
+                parts.append(parts[0])  # close the cycle visually
+                table.add_row(str(i), " -> ".join(parts))
+            console.print(table)
+        repo.close()
+        return
+
+    if top is not None:
+        n = top if top > 0 else 15
+        # Most included files
+        t1 = Table(title=f"Top {n} Most Included Files")
+        t1.add_column("#",          style="dim", width=5, justify="right")
+        t1.add_column("File",       style="cyan")
+        t1.add_column("Included By", justify="right", style="green")
+        for i, (fid, count) in enumerate(dg.top_included(n), 1):
+            f = repo.get_file(fid)
+            t1.add_row(str(i), f["relative_path"] if f else f"<id:{fid}>", str(count))
+        console.print(t1)
+
+        # Most including files
+        t2 = Table(title=f"Top {n} Files With Most Includes")
+        t2.add_column("#",        style="dim", width=5, justify="right")
+        t2.add_column("File",     style="cyan")
+        t2.add_column("Includes", justify="right", style="green")
+        for i, (fid, count) in enumerate(dg.top_includers(n), 1):
+            f = repo.get_file(fid)
+            t2.add_row(str(i), f["relative_path"] if f else f"<id:{fid}>", str(count))
+        console.print(t2)
+
+        console.print(f"\n[dim]Graph: {dg.node_count()} files, {dg.edge_count()} include edges[/dim]")
+        repo.close()
+        return
+
+    if file_path is None:
+        console.print("[yellow]Specify FILE_PATH, or use --circular / --top.[/yellow]")
+        repo.close()
+        return
+
+    # Find the file
+    files = repo.get_file_by_path(pid, file_path)
+    if not files:
+        console.print(f"[yellow]No file matching '{file_path}' found.[/yellow]")
+        repo.close()
+        return
+    target = files[0]
+    fid = target["id"]
+
+    root = dg.build_tree(fid, direction=direction, max_depth=depth)
+    if root is None:
+        console.print(f"[yellow]File '{file_path}' not in dependency graph.[/yellow]")
+        repo.close()
+        return
+
+    label = "includes" if direction == "includes" else "included by"
+    rich_tree = Tree(
+        f"[bold green]{root.relative_path}[/bold green]"
+        f" [dim]({label}, depth={depth})[/dim]"
+    )
+    _render_dep_tree_node(root, rich_tree)
+    console.print(rich_tree)
+    repo.close()
+
+
+def _render_dep_tree_node(node: FileNode, rich_parent):
+    for child in node.children:
+        branch = rich_parent.add(
+            f"[cyan]{child.relative_path}[/cyan]"
+        )
+        _render_dep_tree_node(child, branch)

@@ -2,7 +2,7 @@
 Database schema: all CREATE TABLE / CREATE INDEX statements.
 """
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 DDL = """
 PRAGMA journal_mode = WAL;
@@ -55,7 +55,8 @@ CREATE TABLE IF NOT EXISTS symbols (
     namespace_path TEXT,                     -- e.g. "myapp::net"
     visibility     TEXT,                     -- public | private | protected
     return_type    TEXT,
-    usr            TEXT UNIQUE              -- clang Unified Symbol Resolution
+    usr            TEXT UNIQUE,             -- clang Unified Symbol Resolution
+    template_params TEXT                    -- e.g. "typename T, int N"
 );
 CREATE INDEX IF NOT EXISTS idx_symbols_file     ON symbols(file_id);
 CREATE INDEX IF NOT EXISTS idx_symbols_name     ON symbols(name);
@@ -72,7 +73,8 @@ CREATE TABLE IF NOT EXISTS calls (
     call_file_id  INTEGER NOT NULL REFERENCES files(id),
     call_line     INTEGER,
     call_col      INTEGER,
-    code_snippet  TEXT
+    code_snippet  TEXT,
+    call_type     TEXT DEFAULT 'direct'     -- direct | indirect
 );
 CREATE INDEX IF NOT EXISTS idx_calls_caller  ON calls(caller_id);
 CREATE INDEX IF NOT EXISTS idx_calls_callee  ON calls(callee_id);
@@ -131,4 +133,18 @@ CREATE TABLE IF NOT EXISTS config_usages (
 );
 CREATE INDEX IF NOT EXISTS idx_cusage_key    ON config_usages(config_key);
 CREATE INDEX IF NOT EXISTS idx_cusage_symbol ON config_usages(symbol_id);
+
+-- ── class inheritance ───────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS class_inheritance (
+    id                INTEGER PRIMARY KEY,
+    class_symbol_id   INTEGER NOT NULL REFERENCES symbols(id) ON DELETE CASCADE,
+    base_class_name   TEXT NOT NULL,
+    base_class_usr    TEXT,
+    base_class_id     INTEGER REFERENCES symbols(id),
+    access            TEXT,
+    is_virtual        INTEGER DEFAULT 0,
+    UNIQUE(class_symbol_id, base_class_name)
+);
+CREATE INDEX IF NOT EXISTS idx_inheritance_class ON class_inheritance(class_symbol_id);
+CREATE INDEX IF NOT EXISTS idx_inheritance_base  ON class_inheritance(base_class_id);
 """

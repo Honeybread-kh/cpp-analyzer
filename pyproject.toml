@@ -27,4 +27,6 @@ build-backend = "hatchling.build"
 packages = ["cpp_analyzer"]
 
 [tool.uv]
-dev-dependencies = []
+dev-dependencies = [
+    "pytest>=9.0.2",
+]

@@ -32,6 +32,7 @@ from .db.repository import Repository
 from .analysis.config_tracker import ConfigTracker
 from .analysis.call_graph import CallGraph
 from .analysis.path_tracer import PathTracer
+from .analysis.dependency_graph import DependencyGraph
 
 mcp = FastMCP(
     "cpp-analyzer",
@@ -581,6 +582,155 @@ def export_configs_kconfig(
     repo.close()
 
     return generate_kconfig(result.configs, result.dependencies, project_name)
+
+
+# ── file dependency tools ────────────────────────────────────────────────────
+
+@mcp.tool()
+def file_dependencies(
+    file_path: str,
+    direction: str = "includes",
+    max_depth: int = 3,
+    show_system: bool = False,
+    db_path: str | None = None,
+    project_id: int | None = None,
+) -> str:
+    """
+    Show the include dependency tree for a file.
+
+    Args:
+        file_path:  Partial or full path to the file (matched against relative_path).
+        direction:  'includes' = what this file includes; 'included-by' = who includes it.
+        max_depth:  Tree depth (default 3).
+        show_system: Include system headers (default False).
+    """
+    db   = _default_db(db_path)
+    repo = _repo(db)
+    pid  = _resolve_project_id(repo, project_id)
+    if pid is None:
+        repo.close()
+        return "No project found."
+
+    files = repo.get_file_by_path(pid, file_path)
+    if not files:
+        repo.close()
+        return f"No file matching '{file_path}' found."
+
+    target = files[0]
+    fid = target["id"]
+
+    dg = DependencyGraph(repo, pid)
+    dg.build(include_system=show_system)
+
+    root = dg.build_tree(fid, direction=direction, max_depth=max_depth)
+    repo.close()
+
+    if root is None:
+        return f"File '{file_path}' not in dependency graph."
+
+    lines: list[str] = []
+
+    def render(node, prefix="", is_last=True):
+        connector = "\u2514\u2500\u2500 " if is_last else "\u251c\u2500\u2500 "
+        lines.append(f"{prefix}{connector}{node.relative_path}")
+        child_prefix = prefix + ("    " if is_last else "\u2502   ")
+        for i, child in enumerate(node.children):
+            render(child, child_prefix, i == len(node.children) - 1)
+
+    label = "includes" if direction == "includes" else "included by"
+    lines.append(f"{root.relative_path}  ({label}, depth={max_depth})")
+    for i, child in enumerate(root.children):
+        render(child, "", i == len(root.children) - 1)
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def circular_dependencies(
+    db_path: str | None = None,
+    project_id: int | None = None,
+) -> str:
+    """
+    Detect circular #include dependencies in the project.
+    Returns a list of file cycles that include each other in a loop.
+    """
+    db   = _default_db(db_path)
+    repo = _repo(db)
+    pid  = _resolve_project_id(repo, project_id)
+    if pid is None:
+        repo.close()
+        return "No project found."
+
+    dg = DependencyGraph(repo, pid)
+    dg.build()
+    cycles = dg.circular_dependencies()
+
+    if not cycles:
+        repo.close()
+        return "No circular dependencies found."
+
+    lines = [f"Found {len(cycles)} circular dependency cycle(s):", ""]
+    for i, cycle in enumerate(cycles, 1):
+        parts = []
+        for fid in cycle:
+            f = repo.get_file(fid)
+            parts.append(f["relative_path"] if f else f"<id:{fid}>")
+        parts.append(parts[0])  # close the cycle
+        lines.append(f"  {i:3d}. {' -> '.join(parts)}")
+
+    repo.close()
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def dependency_stats(
+    db_path: str | None = None,
+    project_id: int | None = None,
+    top_n: int = 15,
+) -> str:
+    """
+    Show dependency statistics: most-included files and files with most includes.
+
+    Args:
+        top_n: Number of top files to show (default 15).
+    """
+    db   = _default_db(db_path)
+    repo = _repo(db)
+    pid  = _resolve_project_id(repo, project_id)
+    if pid is None:
+        repo.close()
+        return "No project found."
+
+    dg = DependencyGraph(repo, pid)
+    dg.build()
+
+    lines = [
+        f"Dependency Graph: {dg.node_count()} files, {dg.edge_count()} include edges",
+        "",
+        f"Top {top_n} Most Included Files (highest in-degree):",
+        f"{'#':>4}  {'Included By':>11}  File",
+        "-" * 60,
+    ]
+    for i, (fid, count) in enumerate(dg.top_included(top_n), 1):
+        f = repo.get_file(fid)
+        name = f["relative_path"] if f else f"<id:{fid}>"
+        lines.append(f"{i:>4}  {count:>11}  {name}")
+
+    lines.append("")
+    lines.append(f"Top {top_n} Files With Most Includes (highest out-degree):")
+    lines.append(f"{'#':>4}  {'Includes':>8}  File")
+    lines.append("-" * 60)
+    for i, (fid, count) in enumerate(dg.top_includers(top_n), 1):
+        f = repo.get_file(fid)
+        name = f["relative_path"] if f else f"<id:{fid}>"
+        lines.append(f"{i:>4}  {count:>8}  {name}")
+
+    # Circular dependency count
+    cycles = dg.circular_dependencies()
+    lines.append("")
+    lines.append(f"Circular dependencies: {len(cycles)} cycle(s)")
+
+    repo.close()
+    return "\n".join(lines)
 
 
 # ── entry point ───────────────────────────────────────────────────────────────
