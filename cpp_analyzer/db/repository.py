@@ -23,6 +23,8 @@ class Repository:
     def connect(self) -> None:
         self._conn = sqlite3.connect(self.db_path)
         self._conn.row_factory = sqlite3.Row
+        self._conn.execute("PRAGMA journal_mode = WAL")
+        self._conn.execute("PRAGMA synchronous = NORMAL")
         self._conn.execute("PRAGMA foreign_keys = ON")
         self._apply_schema()
 
@@ -153,8 +155,10 @@ class Repository:
         file_hash: str,
         last_modified: float,
         line_count: int,
+        *,
+        _conn: sqlite3.Connection | None = None,
     ) -> int:
-        with self.transaction() as c:
+        def _do(c):
             c.execute(
                 """INSERT INTO files(project_id, path, relative_path, file_hash,
                        last_modified, last_indexed, line_count)
@@ -170,7 +174,11 @@ class Repository:
                 "SELECT id FROM files WHERE project_id=? AND relative_path=?",
                 (project_id, relative_path),
             ).fetchone()
-        return row["id"]
+            return row["id"]
+        if _conn is not None:
+            return _do(_conn)
+        with self.transaction() as c:
+            return _do(c)
 
     def get_file_hash(self, project_id: int, relative_path: str) -> str | None:
         row = self._conn.execute(
@@ -179,14 +187,22 @@ class Repository:
         ).fetchone()
         return row["file_hash"] if row else None
 
+    def get_all_file_hashes(self, project_id: int) -> dict[str, str]:
+        """Load all file hashes for a project at once. Returns {relative_path: file_hash}."""
+        rows = self._conn.execute(
+            "SELECT relative_path, file_hash FROM files WHERE project_id=?",
+            (project_id,),
+        ).fetchall()
+        return {row["relative_path"]: row["file_hash"] for row in rows}
+
     def list_files(self, project_id: int) -> list[sqlite3.Row]:
         return self._conn.execute(
             "SELECT * FROM files WHERE project_id=? ORDER BY relative_path",
             (project_id,),
         ).fetchall()
 
-    def delete_file_symbols(self, file_id: int) -> None:
-        with self.transaction() as c:
+    def delete_file_symbols(self, file_id: int, *, _conn: sqlite3.Connection | None = None) -> None:
+        def _do(c):
             c.execute("DELETE FROM calls WHERE call_file_id=?", (file_id,))
             c.execute("DELETE FROM config_sources WHERE file_id=?", (file_id,))
             c.execute("DELETE FROM config_usages WHERE file_id=?", (file_id,))
@@ -198,6 +214,11 @@ class Repository:
             )
             c.execute("DELETE FROM symbols WHERE file_id=?", (file_id,))
             c.execute("DELETE FROM includes WHERE file_id=?", (file_id,))
+        if _conn is not None:
+            _do(_conn)
+            return
+        with self.transaction() as c:
+            _do(c)
 
     # ── symbols ───────────────────────────────────────────────────────────────
 
@@ -220,16 +241,16 @@ class Repository:
         usr: str,
         *,
         template_params: str = "",
+        _conn: sqlite3.Connection | None = None,
     ) -> int:
-        with self.transaction() as c:
-            # Validate parent_id exists to avoid FK violation
+        def _do(c):
+            nonlocal parent_id
             if parent_id is not None:
                 exists = c.execute(
                     "SELECT 1 FROM symbols WHERE id=?", (parent_id,)
                 ).fetchone()
                 if not exists:
                     parent_id = None
-
             cur = c.execute(
                 """INSERT OR REPLACE INTO symbols(
                        file_id, name, qualified_name, kind, signature,
@@ -247,6 +268,10 @@ class Repository:
                 ),
             )
             return cur.lastrowid
+        if _conn is not None:
+            return _do(_conn)
+        with self.transaction() as c:
+            return _do(c)
 
     def resolve_symbol_id(self, usr: str) -> int | None:
         row = self._conn.execute(
@@ -303,8 +328,9 @@ class Repository:
         code_snippet: str,
         *,
         call_type: str = "direct",
+        _conn: sqlite3.Connection | None = None,
     ) -> None:
-        with self.transaction() as c:
+        def _do(c):
             c.execute(
                 """INSERT OR IGNORE INTO calls(
                        caller_id, callee_name, callee_id,
@@ -315,6 +341,11 @@ class Repository:
                  call_file_id, call_line, call_col, code_snippet,
                  call_type),
             )
+        if _conn is not None:
+            _do(_conn)
+            return
+        with self.transaction() as c:
+            _do(c)
 
     def get_callees(self, symbol_id: int) -> list[sqlite3.Row]:
         return self._conn.execute(
@@ -350,8 +381,10 @@ class Repository:
         base_class_id: int | None = None,
         access: str = "",
         is_virtual: bool = False,
+        *,
+        _conn: sqlite3.Connection | None = None,
     ) -> None:
-        with self.transaction() as c:
+        def _do(c):
             c.execute(
                 """INSERT OR IGNORE INTO class_inheritance(
                        class_symbol_id, base_class_name, base_class_usr,
@@ -360,6 +393,11 @@ class Repository:
                 (class_symbol_id, base_class_name, base_class_usr,
                  base_class_id, access, int(is_virtual)),
             )
+        if _conn is not None:
+            _do(_conn)
+            return
+        with self.transaction() as c:
+            _do(c)
 
     def get_base_classes(self, symbol_id: int) -> list[sqlite3.Row]:
         """Return base classes of a given class symbol."""
@@ -405,14 +443,21 @@ class Repository:
         included_path: str,
         line: int,
         is_system: bool,
+        *,
+        _conn: sqlite3.Connection | None = None,
     ) -> None:
-        with self.transaction() as c:
+        def _do(c):
             c.execute(
                 """INSERT OR IGNORE INTO includes(
                        file_id, included_file_id, included_path, line, is_system)
                    VALUES(?,?,?,?,?)""",
                 (file_id, included_file_id, included_path, line, int(is_system)),
             )
+        if _conn is not None:
+            _do(_conn)
+            return
+        with self.transaction() as c:
+            _do(c)
 
     def resolve_include_file_ids(self, project_id: int) -> int:
         """Match included_path to files.relative_path and UPDATE included_file_id.

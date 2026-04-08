@@ -267,6 +267,11 @@ class ClangParser:
     def available(self) -> bool:
         return self._available
 
+    @staticmethod
+    def compute_file_hash(file_path: str | Path) -> str:
+        """Compute SHA-256 hash of a file without parsing it."""
+        return hashlib.sha256(Path(file_path).read_bytes()).hexdigest()
+
     def parse_file(self, file_path: str | Path) -> ParseResult:
         path = str(file_path)
         content = Path(path).read_bytes()
