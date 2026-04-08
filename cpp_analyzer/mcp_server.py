@@ -607,6 +607,7 @@ def export_configs_kconfig(
 def trace_dataflow(
     source_pattern: str | None = None,
     sink_pattern: str | None = None,
+    patterns_file: str | None = None,
     db_path: str | None = None,
     project_id: int | None = None,
     max_depth: int = 5,
@@ -620,11 +621,14 @@ def trace_dataflow(
     Args:
         source_pattern: Regex for source variables (default: config/cfg/param field patterns).
         sink_pattern:   Regex for sink variables (default: REG_WRITE, reg->field patterns).
+        patterns_file:  Path to YAML file with source/sink pattern definitions.
         max_depth:      Maximum trace depth across function calls (default 5).
         max_paths:      Maximum number of paths to find (default 100).
         save:           Save results to database for later retrieval.
     """
-    from .analysis.taint_tracker import TaintTracker, DEFAULT_SOURCE_PATTERNS, DEFAULT_SINK_PATTERNS
+    from .analysis.taint_tracker import (
+        TaintTracker, DEFAULT_SOURCE_PATTERNS, DEFAULT_SINK_PATTERNS, load_patterns_yaml,
+    )
 
     db   = _default_db(db_path)
     repo = _repo(db)
@@ -634,10 +638,21 @@ def trace_dataflow(
         return "No project found. Run index_project first."
 
     source_patterns = DEFAULT_SOURCE_PATTERNS
+    sink_patterns = DEFAULT_SINK_PATTERNS
+
+    if patterns_file:
+        try:
+            yaml_sources, yaml_sinks = load_patterns_yaml(patterns_file)
+            if yaml_sources:
+                source_patterns = yaml_sources
+            if yaml_sinks:
+                sink_patterns = yaml_sinks
+        except Exception as e:
+            repo.close()
+            return f"Error loading patterns file: {e}"
+
     if source_pattern:
         source_patterns = [{"name": "custom", "regex": source_pattern}]
-
-    sink_patterns = DEFAULT_SINK_PATTERNS
     if sink_pattern:
         sink_patterns = [{"name": "custom", "regex": sink_pattern}]
 

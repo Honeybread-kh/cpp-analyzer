@@ -322,25 +322,42 @@ def trace_config(key, db, project_id, depth, chains):
 @trace.command("dataflow")
 @click.option("--db",         default=DEFAULT_DB, show_default=True)
 @click.option("--project-id", default=None, type=int)
-@click.option("--source",     default=None, help="Source pattern regex (default: config field patterns)")
-@click.option("--sink",       default=None, help="Sink pattern regex (default: REG_WRITE, reg->field patterns)")
+@click.option("--patterns",   default=None, type=click.Path(exists=True),
+              help="YAML file with source/sink patterns")
+@click.option("--source",     default=None, help="Source pattern regex (overrides YAML sources)")
+@click.option("--sink",       default=None, help="Sink pattern regex (overrides YAML sinks)")
 @click.option("--depth",      default=5, show_default=True, help="Max trace depth")
 @click.option("--max-paths",  default=100, show_default=True, help="Max dataflow paths")
 @click.option("--save",       is_flag=True, help="Save results to DB")
 @click.option("--format",     "fmt", default="tree", type=click.Choice(["tree", "json"]),
               show_default=True, help="Output format")
-def trace_dataflow(db, project_id, source, sink, depth, max_paths, save, fmt):
-    """Trace dataflow from config fields to register writes (taint analysis)."""
-    from ..analysis.taint_tracker import TaintTracker, DEFAULT_SOURCE_PATTERNS, DEFAULT_SINK_PATTERNS
+def trace_dataflow(db, project_id, patterns, source, sink, depth, max_paths, save, fmt):
+    """Trace dataflow from config fields to register writes (taint analysis).
+
+    Use --patterns to load source/sink patterns from a YAML file.
+    Use --source/--sink to specify a single regex pattern directly.
+    If none specified, built-in defaults are used.
+    """
+    from ..analysis.taint_tracker import (
+        TaintTracker, DEFAULT_SOURCE_PATTERNS, DEFAULT_SINK_PATTERNS, load_patterns_yaml,
+    )
 
     repo = _get_repo(db)
     pid = _resolve_project(repo, project_id)
 
     source_patterns = DEFAULT_SOURCE_PATTERNS
+    sink_patterns = DEFAULT_SINK_PATTERNS
+
+    if patterns:
+        yaml_sources, yaml_sinks = load_patterns_yaml(patterns)
+        if yaml_sources:
+            source_patterns = yaml_sources
+        if yaml_sinks:
+            sink_patterns = yaml_sinks
+        console.print(f"[cyan]Loaded patterns: {len(yaml_sources)} sources, {len(yaml_sinks)} sinks[/cyan]")
+
     if source:
         source_patterns = [{"name": "custom", "regex": source}]
-
-    sink_patterns = DEFAULT_SINK_PATTERNS
     if sink:
         sink_patterns = [{"name": "custom", "regex": sink}]
 

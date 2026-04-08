@@ -34,6 +34,29 @@ DEFAULT_SINK_PATTERNS: list[dict] = [
 ]
 
 
+def load_patterns_yaml(path: str | Path) -> tuple[list[dict], list[dict]]:
+    """Load source/sink patterns from a YAML file.
+
+    Expected format:
+        sources:
+          - name: config_field
+            regex: 'cfg->(\w+)'
+        sinks:
+          - name: REG_WRITE
+            regex: 'REG_WRITE\s*\('
+
+    Returns (source_patterns, sink_patterns).
+    """
+    import yaml
+    with open(path) as f:
+        data = yaml.safe_load(f)
+    sources = data.get("sources", [])
+    sinks = data.get("sinks", [])
+    if not sources and not sinks:
+        raise ValueError(f"No sources or sinks found in {path}")
+    return sources, sinks
+
+
 # ── pointer alias map ────────────────────────────────────────────────────────
 
 class AliasMap:
