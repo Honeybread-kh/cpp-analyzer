@@ -1,0 +1,111 @@
+/**
+ * Dataflow benchmark: HW modeling project simulation.
+ * Tests config → FW → register propagation patterns.
+ */
+
+#include <stdint.h>
+
+/* ── structs ─────────────────────────────────────── */
+
+typedef struct {
+    int frequency;
+    int mode;
+    int threshold;
+    int enable;
+    int width;
+    int height;
+} Config;
+
+typedef struct {
+    int clk_div;
+    int timing_val;
+    int processed_mode;
+} FwParams;
+
+typedef struct {
+    uint32_t regs[64];
+} HwRegs;
+
+/* ── register offsets ──────────────────────────────── */
+
+#define TIMING_REG    0x00
+#define MODE_REG      0x04
+#define CTRL_REG      0x08
+#define THRESH_REG    0x0C
+#define DIM_REG       0x10
+
+#define BASE_CLK      100
+
+/* ── layer 1: config → FW params ─────────────────── */
+
+void config_to_fw(Config* cfg, FwParams* fw) {
+    fw->clk_div = cfg->frequency / BASE_CLK;
+    fw->timing_val = fw->clk_div - 1;
+    fw->processed_mode = cfg->mode | (cfg->enable << 16);
+}
+
+/* ── layer 2: FW params → HW registers ──────────── */
+
+void fw_to_hw(FwParams* fw, HwRegs* regs) {
+    regs->regs[TIMING_REG] = fw->timing_val << 8;
+    regs->regs[MODE_REG] = fw->processed_mode;
+}
+
+/* ── direct config → register (single function) ──── */
+
+void direct_config_write(Config* cfg, HwRegs* regs) {
+    regs->regs[THRESH_REG] = cfg->threshold;
+    regs->regs[DIM_REG] = cfg->width | (cfg->height << 16);
+}
+
+/* ── pointer alias pattern ───────────────────────── */
+
+void alias_write(Config* cfg) {
+    HwRegs* hw = get_hw_regs();
+    HwRegs* r = hw;
+    r->regs[CTRL_REG] = cfg->enable;
+}
+
+/* ── macro-based register write ──────────────────── */
+
+#define REG_WRITE(reg, val)  (*(volatile uint32_t*)(reg) = (val))
+
+void macro_reg_write(Config* cfg) {
+    REG_WRITE(TIMING_REG, cfg->frequency);
+    REG_WRITE(MODE_REG, cfg->mode);
+}
+
+/* ── multi-hop: config → intermediate → intermediate → reg ── */
+
+static int compute_divider(int freq) {
+    return freq / BASE_CLK;
+}
+
+static int compute_timing(int divider) {
+    return divider - 1;
+}
+
+void multi_hop_write(Config* cfg, HwRegs* regs) {
+    int div = compute_divider(cfg->frequency);
+    int timing = compute_timing(div);
+    regs->regs[TIMING_REG] = timing << 8;
+}
+
+/* ── conditional register write ──────────────────── */
+
+void conditional_write(Config* cfg, HwRegs* regs) {
+    if (cfg->enable) {
+        regs->regs[CTRL_REG] = cfg->mode;
+    } else {
+        regs->regs[CTRL_REG] = 0;
+    }
+}
+
+/* ── compound assignment ─────────────────────────── */
+
+void compound_write(Config* cfg, HwRegs* regs) {
+    uint32_t val = 0;
+    val |= cfg->mode;
+    val |= (cfg->threshold << 8);
+    regs->regs[CTRL_REG] = val;
+}

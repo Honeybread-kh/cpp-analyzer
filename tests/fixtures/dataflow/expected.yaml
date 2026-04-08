@@ -1,0 +1,98 @@
+# Expected dataflow analysis results for hw_model.c
+# Used by benchmark tests to verify analysis correctness.
+# Each entry: source → sink, with expected intermediate steps.
+
+paths:
+  # ── direct config → register (should always work) ──
+  - name: "direct threshold"
+    source: "cfg->threshold"
+    sink: "regs->regs[THRESH_REG]"
+    min_depth: 2
+    difficulty: easy
+
+  - name: "direct dimension pack"
+    source: "cfg->width"
+    sink: "regs->regs[DIM_REG]"
+    min_depth: 2
+    difficulty: easy
+
+  - name: "direct dimension pack (height)"
+    source: "cfg->height"
+    sink: "regs->regs[DIM_REG]"
+    min_depth: 2
+    difficulty: easy
+
+  # ── single function with transform ──
+  - name: "config to FW clk_div"
+    source: "cfg->frequency"
+    sink: "fw->clk_div"
+    expected_transform: "/ BASE_CLK"
+    min_depth: 2
+    difficulty: easy
+
+  - name: "config to FW processed_mode"
+    source: "cfg->mode"
+    sink: "fw->processed_mode"
+    min_depth: 2
+    difficulty: easy
+
+  # ── pointer alias ──
+  - name: "alias register write"
+    source: "cfg->enable"
+    sink: "r->regs[CTRL_REG]"
+    requires: alias_tracking
+    min_depth: 2
+    difficulty: medium
+
+  # ── macro-based REG_WRITE ──
+  - name: "macro REG_WRITE frequency"
+    source: "cfg->frequency"
+    sink_pattern: "REG_WRITE.*TIMING_REG"
+    requires: macro_sink
+    min_depth: 2
+    difficulty: medium
+
+  - name: "macro REG_WRITE mode"
+    source: "cfg->mode"
+    sink_pattern: "REG_WRITE.*MODE_REG"
+    requires: macro_sink
+    min_depth: 2
+    difficulty: medium
+
+  # ── inter-procedural (function boundary crossing) ──
+  - name: "multi-hop: config → divider → timing → reg"
+    source: "cfg->frequency"
+    sink: "regs->regs[TIMING_REG]"
+    expected_hops: ["compute_divider", "compute_timing"]
+    requires: inter_procedural
+    min_depth: 4
+    difficulty: hard
+
+  # ── cross-function layer: config_to_fw → fw_to_hw ──
+  - name: "two-layer: config → fw → hw register"
+    source: "cfg->frequency"
+    sink: "regs->regs[TIMING_REG]"
+    expected_hops: ["config_to_fw", "fw_to_hw"]
+    requires: inter_procedural
+    min_depth: 4
+    difficulty: hard
+
+  # ── conditional write ──
+  - name: "conditional register write"
+    source: "cfg->mode"
+    sink: "regs->regs[CTRL_REG]"
+    requires: conditional_tracking
+    min_depth: 2
+    difficulty: medium
+
+  # ── compound assignment chain ──
+  - name: "compound assignment chain"
+    source: "cfg->mode"
+    sink: "regs->regs[CTRL_REG]"
+    requires: compound_assignment
+    min_depth: 3
+    difficulty: medium
+
+# Scoring: each found path = 1 point
+# Difficulty multiplier: easy=1, medium=2, hard=3
+# Total possible score: sum of all (1 * multiplier)

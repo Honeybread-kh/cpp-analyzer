@@ -1,0 +1,255 @@
+"""
+Dataflow taint analysis benchmark tests.
+
+Tests the taint tracker against known C code patterns with expected results.
+Used for regression testing and gap detection.
+
+실행:
+    pytest tests/test_dataflow.py -v
+    pytest tests/test_dataflow.py -v -k "easy"        # easy 난이도만
+    pytest tests/test_dataflow.py -v -k "benchmark"    # 벤치마크 점수만
+"""
+
+from __future__ import annotations
+
+import os
+import tempfile
+from pathlib import Path
+
+import pytest
+import yaml
+
+from cpp_analyzer.core.indexer import Indexer
+from cpp_analyzer.db.repository import Repository
+from cpp_analyzer.analysis.taint_tracker import TaintTracker
+
+
+FIXTURES_DIR = Path(__file__).parent / "fixtures" / "dataflow"
+EXPECTED_PATH = FIXTURES_DIR / "expected.yaml"
+
+
+# ── fixtures ──────────────────────────────────────────────────────────────────
+
+@pytest.fixture(scope="module")
+def analysis_db():
+    """Index dataflow test fixtures and return (repo, pid, paths)."""
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        db_path = f.name
+
+    repo = Repository(db_path)
+    repo.connect()
+    pid = repo.upsert_project("dataflow-test", str(FIXTURES_DIR))
+
+    indexer = Indexer(repo, pid, FIXTURES_DIR)
+    indexer.run(force=True)
+
+    source_patterns = [
+        {"name": "config_field", "regex": r"cfg->(\w+)"},
+    ]
+    sink_patterns = [
+        {"name": "reg_array", "regex": r"(?:regs|r|hw)->regs\["},
+        {"name": "fw_field", "regex": r"fw->(\w+)\s*="},
+        {"name": "REG_WRITE", "regex": r"REG_WRITE\s*\("},
+    ]
+
+    tracker = TaintTracker(repo, pid, source_patterns, sink_patterns)
+    paths = tracker.trace(max_depth=5, max_paths=200)
+
+    yield repo, pid, paths
+
+    repo.close()
+    os.unlink(db_path)
+
+
+@pytest.fixture(scope="module")
+def expected():
+    """Load expected results from YAML."""
+    with open(EXPECTED_PATH) as f:
+        return yaml.safe_load(f)
+
+
+# ── helpers ───────────────────────────────────────────────────────────────────
+
+def _find_path(paths, source_substr: str, sink_substr: str = None, sink_pattern: str = None):
+    """Find a matching path by source/sink substring."""
+    import re
+    for p in paths:
+        if source_substr not in p.source.variable:
+            continue
+        if sink_substr and sink_substr in p.sink.variable:
+            return p
+        if sink_pattern and re.search(sink_pattern, p.sink.variable):
+            return p
+        if not sink_substr and not sink_pattern:
+            return p
+    return None
+
+
+# ── unit tests: direct patterns ───────────────────────────────────────────────
+
+class TestDirectPatterns:
+    """Easy: direct config → register mappings within a single function."""
+
+    def test_direct_threshold(self, analysis_db):
+        """cfg->threshold → regs->regs[THRESH_REG]"""
+        _, _, paths = analysis_db
+        found = _find_path(paths, "cfg->threshold", "regs->regs[THRESH_REG]")
+        assert found is not None, "Failed to trace cfg->threshold → register"
+
+    def test_direct_width(self, analysis_db):
+        """cfg->width → regs->regs[DIM_REG]"""
+        _, _, paths = analysis_db
+        found = _find_path(paths, "cfg->width", "regs->regs[DIM_REG]")
+        assert found is not None, "Failed to trace cfg->width → register"
+
+    def test_direct_height(self, analysis_db):
+        """cfg->height → regs->regs[DIM_REG]"""
+        _, _, paths = analysis_db
+        found = _find_path(paths, "cfg->height", "regs->regs[DIM_REG]")
+        assert found is not None, "Failed to trace cfg->height → register"
+
+    def test_config_to_fw_clkdiv(self, analysis_db):
+        """cfg->frequency → fw->clk_div"""
+        _, _, paths = analysis_db
+        found = _find_path(paths, "cfg->frequency", "fw->clk_div")
+        assert found is not None, "Failed to trace cfg->frequency → fw->clk_div"
+
+    def test_config_to_fw_mode(self, analysis_db):
+        """cfg->mode → fw->processed_mode"""
+        _, _, paths = analysis_db
+        found = _find_path(paths, "cfg->mode", "fw->processed_mode")
+        assert found is not None, "Failed to trace cfg->mode → fw->processed_mode"
+
+
+class TestMediumPatterns:
+    """Medium: alias tracking, macro sinks, conditional writes."""
+
+    def test_alias_register_write(self, analysis_db):
+        """cfg->enable → r->regs[CTRL_REG] (via pointer alias r=hw)"""
+        _, _, paths = analysis_db
+        found = _find_path(paths, "cfg->enable", "r->regs[CTRL_REG]")
+        if found is None:
+            # alias might resolve to hw->regs
+            found = _find_path(paths, "cfg->enable", "hw->regs[CTRL_REG]")
+        # This may fail — alias tracking is best-effort
+        if found is None:
+            pytest.xfail("Alias tracking not yet resolving r→hw→regs chain")
+
+    def test_macro_reg_write(self, analysis_db):
+        """cfg->frequency → REG_WRITE(TIMING_REG, ...)"""
+        _, _, paths = analysis_db
+        found = _find_path(paths, "cfg->frequency", sink_pattern=r"REG_WRITE")
+        if found is None:
+            pytest.xfail("Macro-based REG_WRITE sink detection not yet working")
+
+    def test_conditional_write(self, analysis_db):
+        """cfg->mode → regs->regs[CTRL_REG] (inside if block)"""
+        _, _, paths = analysis_db
+        found = _find_path(paths, "cfg->mode", "regs->regs[CTRL_REG]")
+        assert found is not None, "Failed to trace conditional register write"
+
+
+class TestHardPatterns:
+    """Hard: inter-procedural, multi-layer function chains."""
+
+    def test_multi_hop(self, analysis_db):
+        """cfg->frequency → compute_divider → compute_timing → regs (3 functions)"""
+        _, _, paths = analysis_db
+        # Look for a path from cfg->frequency to regs in multi_hop_write
+        found = None
+        for p in paths:
+            if "cfg->frequency" in p.source.variable and "regs->regs" in p.sink.variable:
+                # check if it goes through multi_hop_write's chain
+                funcs = {s.function for s in p.steps}
+                if "compute_divider" in funcs or "compute_timing" in funcs:
+                    found = p
+                    break
+        if found is None:
+            pytest.xfail("Inter-procedural multi-hop tracking not yet working at this depth")
+
+    def test_two_layer(self, analysis_db):
+        """cfg->frequency → config_to_fw → fw_to_hw → regs (cross-function layers)"""
+        _, _, paths = analysis_db
+        found = None
+        for p in paths:
+            if "cfg->frequency" in p.source.variable:
+                funcs = {p.sink.function} | {s.function for s in p.steps}
+                if "config_to_fw" in funcs and "fw_to_hw" in funcs:
+                    found = p
+                    break
+        if found is None:
+            pytest.xfail("Two-layer cross-function tracking not yet working")
+
+
+# ── benchmark scoring ─────────────────────────────────────────────────────────
+
+class TestBenchmark:
+    """Aggregate benchmark scoring for gap analysis."""
+
+    def test_benchmark_score(self, analysis_db, expected):
+        """Run all expected paths and compute a coverage score."""
+        _, _, paths = expected["paths"], None, analysis_db[2]
+        actual_paths = analysis_db[2]
+
+        difficulty_weight = {"easy": 1, "medium": 2, "hard": 3}
+        total_score = 0
+        max_score = 0
+        results = []
+
+        for exp in expected["paths"]:
+            weight = difficulty_weight.get(exp.get("difficulty", "easy"), 1)
+            max_score += weight
+
+            source = exp["source"]
+            sink = exp.get("sink")
+            sink_pat = exp.get("sink_pattern")
+
+            found = _find_path(actual_paths, source, sink, sink_pat)
+            status = "PASS" if found else "MISS"
+            if found:
+                total_score += weight
+
+            results.append({
+                "name": exp["name"],
+                "difficulty": exp.get("difficulty", "easy"),
+                "status": status,
+                "requires": exp.get("requires", "basic"),
+            })
+
+        # Print results table
+        print(f"\n{'='*70}")
+        print(f"  DATAFLOW BENCHMARK SCORE: {total_score}/{max_score} "
+              f"({total_score/max_score*100:.0f}%)")
+        print(f"{'='*70}")
+        for r in results:
+            icon = "PASS" if r["status"] == "PASS" else "MISS"
+            print(f"  [{icon}] {r['name']:<45} "
+                  f"({r['difficulty']}, requires: {r['requires']})")
+        print(f"{'='*70}")
+
+        # Gap analysis
+        gaps = [r for r in results if r["status"] == "MISS"]
+        if gaps:
+            print(f"\n  GAPS ({len(gaps)} missed):")
+            by_req = {}
+            for g in gaps:
+                by_req.setdefault(g["requires"], []).append(g["name"])
+            for req, names in by_req.items():
+                print(f"    [{req}]: {', '.join(names)}")
+
+        # Write gap report for CI
+        report_path = Path(__file__).parent.parent / "_benchmark_report.json"
+        import json
+        report = {
+            "score": total_score,
+            "max_score": max_score,
+            "pct": round(total_score / max_score * 100, 1),
+            "total_paths_found": len(actual_paths),
+            "results": results,
+            "gaps": [{"name": g["name"], "requires": g["requires"]} for g in gaps],
+        }
+        report_path.write_text(json.dumps(report, indent=2))
+        print(f"\n  Report written to: {report_path}")
+
+        # Don't fail the test — this is informational
+        assert total_score > 0, "No paths found at all — analysis is broken"
