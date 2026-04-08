@@ -4,6 +4,7 @@ Database access layer.  All SQL lives here; the rest of the code sees Python obj
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
@@ -51,6 +52,33 @@ class Repository:
                 (str(SCHEMA_VERSION),),
             )
             self._conn.commit()
+        else:
+            old_version = int(row["value"])
+            if old_version < 5:
+                self._migrate_to_v5()
+                self._conn.execute(
+                    "UPDATE schema_meta SET value=? WHERE key='version'",
+                    (str(SCHEMA_VERSION),),
+                )
+                self._conn.commit()
+
+    def _migrate_to_v5(self) -> None:
+        """Migrate projects.root_path from single path string to JSON array.
+
+        Also drops the UNIQUE constraint on root_path (handled by DDL change)
+        and adds UNIQUE on name instead.
+        """
+        rows = self._conn.execute("SELECT id, root_path FROM projects").fetchall()
+        for r in rows:
+            rp = r["root_path"]
+            # If already a JSON array, skip
+            if rp.startswith("["):
+                continue
+            self._conn.execute(
+                "UPDATE projects SET root_path=? WHERE id=?",
+                (json.dumps([rp]), r["id"]),
+            )
+        self._conn.commit()
 
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
@@ -63,18 +91,42 @@ class Repository:
 
     # ── projects ──────────────────────────────────────────────────────────────
 
-    def upsert_project(self, name: str, root_path: str) -> int:
+    def upsert_project(self, name: str, root_paths: str | list[str]) -> int:
+        """Create or update a project with one or more root paths.
+
+        Args:
+            name: Project name (used as unique key).
+            root_paths: A single root path string or a list of root path strings.
+                        Stored as a JSON array in the DB.
+        """
+        if isinstance(root_paths, str):
+            paths_json = json.dumps([root_paths])
+        else:
+            paths_json = json.dumps(list(root_paths))
+
         with self.transaction() as c:
             c.execute(
                 """INSERT INTO projects(name, root_path)
                    VALUES(?,?)
-                   ON CONFLICT(root_path) DO UPDATE SET name=excluded.name""",
-                (name, root_path),
+                   ON CONFLICT(name) DO UPDATE SET root_path=excluded.root_path""",
+                (name, paths_json),
             )
             row = c.execute(
-                "SELECT id FROM projects WHERE root_path=?", (root_path,)
+                "SELECT id FROM projects WHERE name=?", (name,)
             ).fetchone()
         return row["id"]
+
+    def get_project_root_paths(self, project_id: int) -> list[str]:
+        """Return the list of root paths for a project (deserialized from JSON)."""
+        row = self._conn.execute(
+            "SELECT root_path FROM projects WHERE id=?", (project_id,)
+        ).fetchone()
+        if row is None:
+            return []
+        rp = row["root_path"]
+        if rp.startswith("["):
+            return json.loads(rp)
+        return [rp]
 
     def touch_project(self, project_id: int) -> None:
         self._conn.execute(

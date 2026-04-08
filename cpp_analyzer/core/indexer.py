@@ -21,13 +21,22 @@ class Indexer:
         self,
         repo: Repository,
         project_id: int,
-        root_path: str | Path,
+        root_paths: str | Path | list[str] | list[Path],
         extra_clang_args: list[str] | None = None,
         progress_cb: Callable[[str, int, int], None] | None = None,
     ):
         self.repo = repo
         self.project_id = project_id
-        self.root = Path(root_path).resolve()
+
+        # Normalise to a list of resolved Paths
+        if isinstance(root_paths, (str, Path)):
+            self.roots: list[Path] = [Path(root_paths).resolve()]
+        else:
+            self.roots = [Path(p).resolve() for p in root_paths]
+
+        # Keep legacy attribute for backwards compatibility
+        self.root = self.roots[0]
+
         self.parser = ClangParser(extra_clang_args)
         self.progress_cb = progress_cb or (lambda *_: None)
 
@@ -44,7 +53,8 @@ class Indexer:
 
         for i, path in enumerate(files, 1):
             self.progress_cb(str(path), i, total)
-            rel = str(path.relative_to(self.root))
+            owning_root = self._owning_root(path)
+            rel = str(path.relative_to(owning_root))
 
             # incremental: skip if hash unchanged
             if not force:
@@ -161,18 +171,39 @@ class Indexer:
 
     def _collect_files(self) -> list[Path]:
         out: list[Path] = []
-        for dirpath, dirnames, filenames in os.walk(self.root):
-            # skip hidden dirs and common build/vendor dirs
-            dirnames[:] = [
-                d for d in dirnames
-                if not d.startswith(".")
-                and d not in {"build", "cmake-build-debug", "cmake-build-release",
-                              "node_modules", "_deps", "third_party", "vendor"}
-            ]
-            for fn in filenames:
-                if Path(fn).suffix.lower() in C_EXTENSIONS:
-                    out.append(Path(dirpath) / fn)
+        for root in self.roots:
+            for dirpath, dirnames, filenames in os.walk(root):
+                # skip hidden dirs and common build/vendor dirs
+                dirnames[:] = [
+                    d for d in dirnames
+                    if not d.startswith(".")
+                    and d not in {"build", "cmake-build-debug", "cmake-build-release",
+                                  "node_modules", "_deps", "third_party", "vendor"}
+                ]
+                for fn in filenames:
+                    if Path(fn).suffix.lower() in C_EXTENSIONS:
+                        out.append(Path(dirpath) / fn)
         return sorted(out)
+
+    def _owning_root(self, path: Path) -> Path:
+        """Return the root directory that contains *path*.
+
+        When multiple roots could match (nested directories), the longest
+        (most specific) root wins.
+        """
+        resolved = path.resolve()
+        best: Path | None = None
+        for root in self.roots:
+            try:
+                resolved.relative_to(root)
+                if best is None or len(root.parts) > len(best.parts):
+                    best = root
+            except ValueError:
+                continue
+        if best is None:
+            # Fallback: should not happen if _collect_files works correctly
+            return self.roots[0]
+        return best
 
 
 class IndexStats:

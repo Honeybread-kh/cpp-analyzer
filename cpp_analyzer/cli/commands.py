@@ -14,6 +14,7 @@ Usage examples:
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -71,7 +72,9 @@ def _resolve_project(repo: Repository, project_id: int | None) -> int:
         return projects[0]["id"]
     console.print("[yellow]Multiple projects found. Specify --project-id:[/yellow]")
     for p in projects:
-        console.print(f"  {p['id']:3d}  {p['name']}  ({p['root_path']})")
+        rp = p['root_path']
+        display = ", ".join(json.loads(rp)) if rp.startswith("[") else rp
+        console.print(f"  {p['id']:3d}  {p['name']}  ({display})")
     sys.exit(1)
 
 
@@ -86,19 +89,23 @@ def cli():
 # ── index ─────────────────────────────────────────────────────────────────────
 
 @cli.command()
-@click.argument("directory", type=click.Path(exists=True, file_okay=False))
+@click.argument("directories", nargs=-1, required=True, type=click.Path(exists=True, file_okay=False))
 @click.option("--db",           default=DEFAULT_DB,  show_default=True, help="SQLite DB path")
-@click.option("--name",         default=None,        help="Project name (default: directory name)")
+@click.option("--name",         default=None,        help="Project name (default: first directory name)")
 @click.option("--patterns",     default=None,        help="config_patterns.yaml path")
 @click.option("--force",        is_flag=True,        help="Re-index all files even if unchanged")
 @click.option("--clang-args",   default="",          help="Extra clang args (comma-separated)")
-def index(directory, db, name, patterns, force, clang_args):
-    """Parse and index a C++ source directory."""
-    root = Path(directory).resolve()
-    project_name = name or root.name
+def index(directories, db, name, patterns, force, clang_args):
+    """Parse and index one or more C++ source directories."""
+    roots = [Path(d).resolve() for d in directories]
+    project_name = name or roots[0].name
 
     repo = _get_repo(db)
-    project_id = repo.upsert_project(project_name, str(root))
+    project_id = repo.upsert_project(project_name, [str(r) for r in roots])
+
+    console.print(f"[bold]Project:[/bold] {project_name}  ({len(roots)} director{'y' if len(roots) == 1 else 'ies'})")
+    for r in roots:
+        console.print(f"  [dim]{r}[/dim]")
 
     # load and sync config patterns
     pattern_list = _load_patterns(patterns)
@@ -114,7 +121,7 @@ def index(directory, db, name, patterns, force, clang_args):
         def progress(path, i, total):
             status.update(f"[bold green]Indexing {i}/{total}: {Path(path).name}")
 
-        indexer = Indexer(repo, project_id, root, extra_args or None, progress)
+        indexer = Indexer(repo, project_id, roots, extra_args or None, progress)
         stats = indexer.run(force=force)
 
     console.print(f"[bold green]Indexing complete[/bold green]")
@@ -395,9 +402,12 @@ def report(db, project_id, output):
     p   = repo.get_project(pid)
     s   = repo.stats(pid)
 
+    rp = p['root_path']
+    root_display = ", ".join(json.loads(rp)) if rp.startswith("[") else rp
+
     lines = [
         f"# C++ Analysis Report: {p['name']}",
-        f"\nRoot: `{p['root_path']}`  |  Last indexed: {p['last_indexed']}",
+        f"\nRoot: `{root_display}`  |  Last indexed: {p['last_indexed']}",
         "\n## Summary\n",
     ]
     for k, v in s.items():

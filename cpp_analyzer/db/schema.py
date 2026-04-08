@@ -2,7 +2,7 @@
 Database schema: all CREATE TABLE / CREATE INDEX statements.
 """
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 DDL = """
 PRAGMA journal_mode = WAL;
@@ -17,8 +17,8 @@ CREATE TABLE IF NOT EXISTS schema_meta (
 -- ── project ───────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS projects (
     id         INTEGER PRIMARY KEY,
-    name       TEXT    NOT NULL,
-    root_path  TEXT    NOT NULL UNIQUE,
+    name       TEXT    NOT NULL UNIQUE,
+    root_path  TEXT    NOT NULL,           -- JSON array of root paths
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     last_indexed DATETIME
 );

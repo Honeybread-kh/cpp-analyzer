@@ -12,6 +12,7 @@ Usage:
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -46,7 +47,11 @@ class ConfigDependencyAnalyzer:
         """Run full analysis pipeline."""
         files = self.repo.list_files(self.project_id)
         project = self.repo.get_project(self.project_id)
-        root_path = project["root_path"] if project else ""
+        if project:
+            rp = project["root_path"]
+            root_paths = json.loads(rp) if rp.startswith("[") else [rp]
+        else:
+            root_paths = []
 
         # Phase 1: Extract struct fields from headers
         for f in files:

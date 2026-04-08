@@ -93,38 +93,51 @@ def _resolve_project_id(repo: Repository, project_id: int | None) -> int | None:
 
 @mcp.tool()
 def index_project(
-    directory: str,
+    directory: str | None = None,
+    directories: list[str] | None = None,
     db_path: str | None = None,
     project_name: str | None = None,
     force: bool = False,
 ) -> str:
     """
-    Parse and index a C++ source directory into the analysis database.
+    Parse and index one or more C++ source directories into the analysis database.
     Must be called before any other tool.
 
     Args:
-        directory:    Absolute or relative path to the C++ source root.
+        directory:    (Deprecated) Single source directory path. Use 'directories' instead.
+        directories:  List of absolute or relative paths to C++ source roots.
         db_path:      SQLite DB file path (default: cpp_analysis.db in cwd).
-        project_name: Human-readable project name (default: directory name).
+        project_name: Human-readable project name (default: first directory name).
         force:        Re-index all files even if unchanged.
 
     Returns:
         Summary of indexed files, symbols, calls, and config hits.
     """
-    db = _default_db(db_path)
-    root = Path(directory).resolve()
-    if not root.exists():
-        return f"ERROR: directory not found: {directory}"
+    # Resolve directory list: support both old 'directory' and new 'directories'
+    dir_list: list[str] = []
+    if directories:
+        dir_list = list(directories)
+    if directory:
+        if directory not in dir_list:
+            dir_list.insert(0, directory)
+    if not dir_list:
+        return "ERROR: at least one directory must be specified (use 'directories' or 'directory')."
 
-    name = project_name or root.name
+    roots = [Path(d).resolve() for d in dir_list]
+    for root in roots:
+        if not root.exists():
+            return f"ERROR: directory not found: {root}"
+
+    db = _default_db(db_path)
+    name = project_name or roots[0].name
     repo = _repo(db)
-    pid  = repo.upsert_project(name, str(root))
+    pid  = repo.upsert_project(name, [str(r) for r in roots])
 
     patterns = _load_patterns()
     if patterns:
         repo.sync_config_patterns(patterns)
 
-    indexer = Indexer(repo, pid, root)
+    indexer = Indexer(repo, pid, roots)
     stats   = indexer.run(force=force)
 
     config_hits = 0
@@ -135,7 +148,11 @@ def index_project(
     repo.close()
 
     lines = [
-        f"Indexed project '{name}' → {db}",
+        f"Indexed project '{name}' ({len(roots)} director{'y' if len(roots) == 1 else 'ies'}) → {db}",
+    ]
+    for r in roots:
+        lines.append(f"  Root: {r}")
+    lines += [
         f"  Files   indexed : {stats.indexed}",
         f"  Files   skipped : {stats.skipped} (unchanged)",
         f"  Symbols found   : {stats.symbols}",
