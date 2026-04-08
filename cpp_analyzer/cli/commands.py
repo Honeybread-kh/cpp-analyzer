@@ -319,6 +319,69 @@ def trace_config(key, db, project_id, depth, chains):
     repo.close()
 
 
+@trace.command("dataflow")
+@click.option("--db",         default=DEFAULT_DB, show_default=True)
+@click.option("--project-id", default=None, type=int)
+@click.option("--source",     default=None, help="Source pattern regex (default: config field patterns)")
+@click.option("--sink",       default=None, help="Sink pattern regex (default: REG_WRITE, reg->field patterns)")
+@click.option("--depth",      default=5, show_default=True, help="Max trace depth")
+@click.option("--max-paths",  default=100, show_default=True, help="Max dataflow paths")
+@click.option("--save",       is_flag=True, help="Save results to DB")
+@click.option("--format",     "fmt", default="tree", type=click.Choice(["tree", "json"]),
+              show_default=True, help="Output format")
+def trace_dataflow(db, project_id, source, sink, depth, max_paths, save, fmt):
+    """Trace dataflow from config fields to register writes (taint analysis)."""
+    from ..analysis.taint_tracker import TaintTracker, DEFAULT_SOURCE_PATTERNS, DEFAULT_SINK_PATTERNS
+
+    repo = _get_repo(db)
+    pid = _resolve_project(repo, project_id)
+
+    source_patterns = DEFAULT_SOURCE_PATTERNS
+    if source:
+        source_patterns = [{"name": "custom", "regex": source}]
+
+    sink_patterns = DEFAULT_SINK_PATTERNS
+    if sink:
+        sink_patterns = [{"name": "custom", "regex": sink}]
+
+    with console.status("[bold green]Running taint analysis..."):
+        tracker = TaintTracker(repo, pid, source_patterns, sink_patterns)
+        paths = tracker.trace(max_depth=depth, max_paths=max_paths)
+
+    if save and paths:
+        count = tracker.save_results(paths)
+        console.print(f"[cyan]Saved {count} dataflow paths to DB[/cyan]")
+
+    if not paths:
+        console.print("[yellow]No dataflow paths found.[/yellow]")
+        repo.close()
+        return
+
+    console.print(f"\n[bold]Found {len(paths)} dataflow path(s)[/bold]\n")
+
+    if fmt == "json":
+        import json as _json
+        console.print(_json.dumps([p.to_dict() for p in paths], indent=2))
+    else:
+        for i, path in enumerate(paths, 1):
+            tree = Tree(f"[bold yellow]Path {i}[/bold yellow]: {path.source.variable} → {path.sink.variable}")
+            nodes = [path.source] + path.steps + [path.sink]
+            for j, node in enumerate(nodes):
+                style = {"SOURCE": "bold green", "SINK": "bold red"}.get(node.node_type, "cyan")
+                label = f"[{style}]{node.variable}[/{style}]"
+                if node.transform:
+                    label += f"  [dim]({node.transform})[/dim]"
+                if node.file:
+                    label += f"  [blue]{node.file}:{node.line}[/blue]"
+                if node.function:
+                    label += f"  [dim]{node.function}()[/dim]"
+                tree.add(label)
+            console.print(tree)
+            console.print()
+
+    repo.close()
+
+
 @trace.command("path")
 @click.argument("source")
 @click.argument("target")

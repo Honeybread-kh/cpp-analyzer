@@ -2,7 +2,7 @@
 Database schema: all CREATE TABLE / CREATE INDEX statements.
 """
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 DDL = """
 PRAGMA journal_mode = WAL;
@@ -147,4 +147,27 @@ CREATE TABLE IF NOT EXISTS class_inheritance (
 );
 CREATE INDEX IF NOT EXISTS idx_inheritance_class ON class_inheritance(class_symbol_id);
 CREATE INDEX IF NOT EXISTS idx_inheritance_base  ON class_inheritance(base_class_id);
+
+-- ── call arguments (for inter-procedural dataflow) ──────────────────────────
+CREATE TABLE IF NOT EXISTS call_args (
+    id             INTEGER PRIMARY KEY,
+    call_id        INTEGER NOT NULL REFERENCES calls(id) ON DELETE CASCADE,
+    arg_index      INTEGER NOT NULL,
+    arg_expression TEXT,                        -- caller-side actual argument text
+    param_name     TEXT                         -- callee-side parameter name
+);
+CREATE INDEX IF NOT EXISTS idx_callargs_call ON call_args(call_id);
+
+-- ── dataflow paths (taint analysis results) ─────────────────────────────────
+CREATE TABLE IF NOT EXISTS dataflow_paths (
+    id          INTEGER PRIMARY KEY,
+    project_id  INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    source_var  TEXT    NOT NULL,               -- config field name
+    sink_var    TEXT    NOT NULL,               -- register / final target
+    path_json   TEXT    NOT NULL,               -- JSON: [{var, transform, file, line, function}, ...]
+    depth       INTEGER,
+    created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_dfpaths_project ON dataflow_paths(project_id);
+CREATE INDEX IF NOT EXISTS idx_dfpaths_source  ON dataflow_paths(source_var);
 """

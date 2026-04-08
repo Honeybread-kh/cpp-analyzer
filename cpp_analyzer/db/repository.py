@@ -56,8 +56,11 @@ class Repository:
             self._conn.commit()
         else:
             old_version = int(row["value"])
-            if old_version < 5:
-                self._migrate_to_v5()
+            if old_version < SCHEMA_VERSION:
+                if old_version < 5:
+                    self._migrate_to_v5()
+                if old_version < 6:
+                    self._migrate_to_v6()
                 self._conn.execute(
                     "UPDATE schema_meta SET value=? WHERE key='version'",
                     (str(SCHEMA_VERSION),),
@@ -81,6 +84,31 @@ class Repository:
                 (json.dumps([rp]), r["id"]),
             )
         self._conn.commit()
+
+    def _migrate_to_v6(self) -> None:
+        """Add call_args and dataflow_paths tables (v5 -> v6)."""
+        # Tables are created by DDL (IF NOT EXISTS), just need to ensure they exist
+        self._conn.executescript("""
+            CREATE TABLE IF NOT EXISTS call_args (
+                id             INTEGER PRIMARY KEY,
+                call_id        INTEGER NOT NULL REFERENCES calls(id) ON DELETE CASCADE,
+                arg_index      INTEGER NOT NULL,
+                arg_expression TEXT,
+                param_name     TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_callargs_call ON call_args(call_id);
+            CREATE TABLE IF NOT EXISTS dataflow_paths (
+                id          INTEGER PRIMARY KEY,
+                project_id  INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                source_var  TEXT    NOT NULL,
+                sink_var    TEXT    NOT NULL,
+                path_json   TEXT    NOT NULL,
+                depth       INTEGER,
+                created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_dfpaths_project ON dataflow_paths(project_id);
+            CREATE INDEX IF NOT EXISTS idx_dfpaths_source  ON dataflow_paths(source_var);
+        """)
 
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
@@ -670,6 +698,80 @@ class Repository:
             (project_id, config_key),
         ).fetchall()
 
+    # ── call args ─────────────────────────────────────────────────────────────
+
+    def insert_call_arg(
+        self,
+        call_id: int,
+        arg_index: int,
+        arg_expression: str,
+        param_name: str = "",
+        *,
+        _conn: sqlite3.Connection | None = None,
+    ) -> None:
+        def _do(c):
+            c.execute(
+                """INSERT OR IGNORE INTO call_args(
+                       call_id, arg_index, arg_expression, param_name)
+                   VALUES(?,?,?,?)""",
+                (call_id, arg_index, arg_expression, param_name),
+            )
+        if _conn is not None:
+            _do(_conn)
+            return
+        with self.transaction() as c:
+            _do(c)
+
+    def get_call_args(self, call_id: int) -> list[sqlite3.Row]:
+        return self._conn.execute(
+            "SELECT * FROM call_args WHERE call_id=? ORDER BY arg_index",
+            (call_id,),
+        ).fetchall()
+
+    # ── dataflow paths ────────────────────────────────────────────────────────
+
+    def insert_dataflow_path(
+        self,
+        project_id: int,
+        source_var: str,
+        sink_var: str,
+        path_json: str,
+        depth: int,
+    ) -> int:
+        with self.transaction() as c:
+            cur = c.execute(
+                """INSERT INTO dataflow_paths(
+                       project_id, source_var, sink_var, path_json, depth)
+                   VALUES(?,?,?,?,?)""",
+                (project_id, source_var, sink_var, path_json, depth),
+            )
+            return cur.lastrowid
+
+    def get_dataflow_paths(
+        self,
+        project_id: int,
+        source_var: str | None = None,
+        sink_var: str | None = None,
+    ) -> list[sqlite3.Row]:
+        sql = "SELECT * FROM dataflow_paths WHERE project_id=?"
+        params: list = [project_id]
+        if source_var:
+            sql += " AND source_var LIKE ?"
+            params.append(f"%{source_var}%")
+        if sink_var:
+            sql += " AND sink_var LIKE ?"
+            params.append(f"%{sink_var}%")
+        sql += " ORDER BY source_var, sink_var"
+        return self._conn.execute(sql, params).fetchall()
+
+    def delete_dataflow_paths(self, project_id: int) -> int:
+        with self.transaction() as c:
+            cur = c.execute(
+                "DELETE FROM dataflow_paths WHERE project_id=?",
+                (project_id,),
+            )
+            return cur.rowcount
+
     # ── stats ─────────────────────────────────────────────────────────────────
 
     def stats(self, project_id: int) -> dict:
@@ -687,4 +789,5 @@ class Repository:
             "config_keys":    scalar("SELECT COUNT(DISTINCT config_key) FROM config_sources WHERE project_id=?", project_id),
             "config_sources": scalar("SELECT COUNT(*) FROM config_sources WHERE project_id=?", project_id),
             "config_usages":  scalar("SELECT COUNT(*) FROM config_usages cu JOIN files f ON cu.file_id=f.id WHERE f.project_id=?", project_id),
+            "dataflow_paths": scalar("SELECT COUNT(*) FROM dataflow_paths WHERE project_id=?", project_id),
         }

@@ -79,3 +79,49 @@ class ConfigDependency:
             self.function,
             self.code_snippet.replace("\n", " ")[:200],
         ]
+
+
+# ── taint analysis models ────────────────────────────────────────────────────
+
+@dataclass
+class TaintNode:
+    variable: str              # "cfg->param", "local_var", "REG_WRITE(CTRL_0, val)"
+    node_type: str = ""        # SOURCE | INTERMEDIATE | SINK
+    transform: str = ""        # "<< 8", "/ BASE_CLK", ""
+    file: str = ""
+    line: int = 0
+    function: str = ""
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+@dataclass
+class DataFlowPath:
+    source: TaintNode
+    sink: TaintNode
+    steps: list[TaintNode] = field(default_factory=list)
+
+    def to_dict(self) -> dict:
+        return {
+            "source": self.source.to_dict(),
+            "sink": self.sink.to_dict(),
+            "steps": [s.to_dict() for s in self.steps],
+        }
+
+    @property
+    def depth(self) -> int:
+        return len(self.steps) + 2  # source + steps + sink
+
+    def format_chain(self) -> str:
+        """Format as human-readable chain: source →(transform)→ ... → sink."""
+        parts = []
+        nodes = [self.source] + self.steps + [self.sink]
+        for i, node in enumerate(nodes):
+            loc = f"[{node.file}:{node.line}, {node.function}]" if node.file else ""
+            if i == 0:
+                parts.append(f"{node.variable}")
+            else:
+                arrow = f"→({nodes[i-1].transform})→" if nodes[i-1].transform else "→"
+                parts.append(f"  {arrow} {node.variable}  {loc}")
+        return "\n".join(parts)

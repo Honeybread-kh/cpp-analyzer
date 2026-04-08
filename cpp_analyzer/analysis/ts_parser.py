@@ -483,3 +483,208 @@ def extract_macros_with_assignments(root: Node) -> list[dict]:
                 "line": node.start_point[0] + 1,
             })
     return results
+
+
+# ── dataflow: all assignments + call arguments ────────────────────────────
+
+def extract_all_assignments(root: Node) -> list[dict]:
+    """Extract all assignments within function bodies for dataflow analysis.
+
+    Captures both assignment_expression (a = b) and init_declarator (int a = b),
+    including compound assignments (+=, |=, <<=, etc.).
+
+    Returns list of dicts sorted by line:
+        lhs, rhs, rhs_vars (list), operator, transform, line, function
+    """
+    import re
+    results = []
+
+    for func in walk_type(root, "function_definition"):
+        decl = func.child_by_field_name("declarator")
+        body = func.child_by_field_name("body")
+        if decl is None or body is None:
+            continue
+        func_name = _get_function_name(decl) or ""
+
+        # 1. assignment_expression: a = b, a += b, a |= b, etc.
+        for assign in walk_type(body, "assignment_expression"):
+            left = assign.child_by_field_name("left")
+            right = assign.child_by_field_name("right")
+            if left is None or right is None:
+                continue
+
+            lhs = node_text(left).strip()
+            rhs = node_text(right).strip()
+
+            # extract operator (=, +=, |=, <<=, etc.)
+            operator = "="
+            for child in assign.children:
+                if not child.is_named and child.type not in (lhs, rhs):
+                    op_text = child.type
+                    if "=" in op_text:
+                        operator = op_text
+                        break
+
+            # compute transform for compound assignments
+            transform = ""
+            if operator != "=":
+                base_op = operator.replace("=", "")
+                transform = f"{base_op} {rhs}"
+
+            rhs_vars = _extract_variables(right)
+            results.append({
+                "lhs": lhs,
+                "rhs": rhs,
+                "rhs_vars": rhs_vars,
+                "operator": operator,
+                "transform": transform,
+                "line": assign.start_point[0] + 1,
+                "function": func_name,
+            })
+
+        # 2. init_declarator: int a = b; auto* p = &config;
+        for init_decl in walk_type(body, "init_declarator"):
+            declarator = init_decl.child_by_field_name("declarator")
+            value = init_decl.child_by_field_name("value")
+            if declarator is None or value is None:
+                continue
+
+            lhs = node_text(declarator).strip()
+            rhs = node_text(value).strip()
+            rhs_vars = _extract_variables(value)
+
+            results.append({
+                "lhs": lhs,
+                "rhs": rhs,
+                "rhs_vars": rhs_vars,
+                "operator": "=",
+                "transform": "",
+                "line": init_decl.start_point[0] + 1,
+                "function": func_name,
+            })
+
+    results.sort(key=lambda x: (x["function"], x["line"]))
+    return results
+
+
+def extract_call_arguments(root: Node) -> list[dict]:
+    """Extract call expressions and their arguments for inter-procedural analysis.
+
+    Returns list of dicts:
+        callee_name, args (list of {index, expression}), line, function
+    """
+    results = []
+
+    for func in walk_type(root, "function_definition"):
+        decl = func.child_by_field_name("declarator")
+        body = func.child_by_field_name("body")
+        if decl is None or body is None:
+            continue
+        func_name = _get_function_name(decl) or ""
+
+        for call in walk_type(body, "call_expression"):
+            callee_node = call.child_by_field_name("function")
+            args_node = call.child_by_field_name("arguments")
+            if callee_node is None or args_node is None:
+                continue
+
+            callee_name = node_text(callee_node).strip()
+            args = []
+            idx = 0
+            for arg in args_node.named_children:
+                args.append({
+                    "index": idx,
+                    "expression": node_text(arg).strip(),
+                })
+                idx += 1
+
+            results.append({
+                "callee_name": callee_name,
+                "args": args,
+                "line": call.start_point[0] + 1,
+                "function": func_name,
+            })
+
+    return results
+
+
+def extract_function_params(root: Node) -> list[dict]:
+    """Extract function parameter lists for argument-to-parameter mapping.
+
+    Returns list of dicts:
+        function_name, params (list of {index, name, type}), line
+    """
+    results = []
+
+    for func in walk_type(root, "function_definition"):
+        decl = func.child_by_field_name("declarator")
+        if decl is None:
+            continue
+        func_name = _get_function_name(decl) or ""
+
+        # find parameter_list within the declarator
+        params = []
+        for param_list in walk_type(decl, "parameter_list"):
+            idx = 0
+            for param in param_list.named_children:
+                if param.type == "parameter_declaration":
+                    p_type_node = param.child_by_field_name("type")
+                    p_decl_node = param.child_by_field_name("declarator")
+                    p_type = node_text(p_type_node).strip() if p_type_node else ""
+                    p_name = ""
+                    if p_decl_node:
+                        # handle pointer_declarator, reference_declarator wrapping
+                        for sub in walk_named(p_decl_node):
+                            if sub.type == "identifier":
+                                p_name = node_text(sub)
+                                break
+                        if not p_name:
+                            p_name = node_text(p_decl_node).strip()
+                    params.append({
+                        "index": idx,
+                        "name": p_name,
+                        "type": p_type,
+                    })
+                    idx += 1
+            break  # only first parameter_list
+
+        results.append({
+            "function_name": func_name,
+            "params": params,
+            "line": func.start_point[0] + 1,
+        })
+
+    return results
+
+
+def _extract_variables(node: Node) -> list[str]:
+    """Extract all variable/field references from an expression node."""
+    vars_found = []
+
+    # handle root node itself being a field_expression
+    if node.type == "field_expression":
+        vars_found.append(node_text(node).strip())
+        return vars_found
+
+    # field expressions: ptr->field, obj.field
+    for fe in walk_type(node, "field_expression"):
+        vars_found.append(node_text(fe).strip())
+
+    # plain identifiers (but not those already part of field_expressions)
+    field_expr_ranges = set()
+    for fe in walk_type(node, "field_expression"):
+        for i in range(fe.start_byte, fe.end_byte):
+            field_expr_ranges.add(i)
+
+    for ident in walk_type(node, "identifier"):
+        if ident.start_byte not in field_expr_ranges:
+            name = node_text(ident).strip()
+            # skip common non-variable identifiers (function names in calls)
+            parent = ident.parent
+            if parent and parent.type == "call_expression":
+                func_node = parent.child_by_field_name("function")
+                if func_node and ident.start_byte == func_node.start_byte:
+                    continue
+            vars_found.append(name)
+
+    return vars_found

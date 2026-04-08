@@ -601,6 +601,66 @@ def export_configs_kconfig(
     return generate_kconfig(result.configs, result.dependencies, project_name)
 
 
+# ── dataflow taint analysis tools ────────────────────────────────────────────
+
+@mcp.tool()
+def trace_dataflow(
+    source_pattern: str | None = None,
+    sink_pattern: str | None = None,
+    db_path: str | None = None,
+    project_id: int | None = None,
+    max_depth: int = 5,
+    max_paths: int = 100,
+    save: bool = False,
+) -> str:
+    """
+    Trace dataflow from config fields to register writes using taint analysis.
+    Finds multi-stage data propagation chains: config → intermediate → register.
+
+    Args:
+        source_pattern: Regex for source variables (default: config/cfg/param field patterns).
+        sink_pattern:   Regex for sink variables (default: REG_WRITE, reg->field patterns).
+        max_depth:      Maximum trace depth across function calls (default 5).
+        max_paths:      Maximum number of paths to find (default 100).
+        save:           Save results to database for later retrieval.
+    """
+    from .analysis.taint_tracker import TaintTracker, DEFAULT_SOURCE_PATTERNS, DEFAULT_SINK_PATTERNS
+
+    db   = _default_db(db_path)
+    repo = _repo(db)
+    pid  = _resolve_project_id(repo, project_id)
+    if pid is None:
+        repo.close()
+        return "No project found. Run index_project first."
+
+    source_patterns = DEFAULT_SOURCE_PATTERNS
+    if source_pattern:
+        source_patterns = [{"name": "custom", "regex": source_pattern}]
+
+    sink_patterns = DEFAULT_SINK_PATTERNS
+    if sink_pattern:
+        sink_patterns = [{"name": "custom", "regex": sink_pattern}]
+
+    tracker = TaintTracker(repo, pid, source_patterns, sink_patterns)
+    paths = tracker.trace(max_depth=max_depth, max_paths=max_paths)
+
+    if save and paths:
+        tracker.save_results(paths)
+
+    repo.close()
+
+    if not paths:
+        return "No dataflow paths found matching the source/sink patterns."
+
+    lines = [f"Found {len(paths)} dataflow path(s):", ""]
+    for i, path in enumerate(paths, 1):
+        lines.append(f"--- Path {i} ---")
+        lines.append(path.format_chain())
+        lines.append("")
+
+    return "\n".join(lines)
+
+
 # ── file dependency tools ────────────────────────────────────────────────────
 
 @mcp.tool()
