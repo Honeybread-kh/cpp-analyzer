@@ -264,6 +264,36 @@ void volatile_mmio_write(Config* cfg) {
     *(volatile uint32_t*)(HW_BASE + 0x04) = cfg->mode;
 }
 
+/* ── function pointer indirect call ──────────────── */
+
+typedef void (*reg_writer_t)(HwRegs*, uint32_t);
+
+static void write_timing_fn(HwRegs* regs, uint32_t val) {
+    regs->regs[TIMING_REG] = val;
+}
+
+static void write_mode_fn(HwRegs* regs, uint32_t val) {
+    regs->regs[MODE_REG] = val;
+}
+
+void fnptr_dispatch(Config* cfg, HwRegs* regs) {
+    reg_writer_t writer = write_timing_fn;
+    writer(regs, cfg->frequency);
+}
+
+typedef struct {
+    reg_writer_t timing_fn;
+    reg_writer_t mode_fn;
+} WriterOps;
+
+void fnptr_struct_dispatch(Config* cfg, HwRegs* regs) {
+    WriterOps ops;
+    ops.timing_fn = write_timing_fn;
+    ops.mode_fn = write_mode_fn;
+    ops.timing_fn(regs, cfg->frequency);
+    ops.mode_fn(regs, cfg->mode);
+}
+
 /* ── dependency: multiple config fields → same reg ── */
 
 void dependent_write(Config* cfg, HwRegs* regs) {

@@ -159,26 +159,53 @@ class TaintTracker:
                 function=func_name,
             )
 
+            # build list of (start_var, start_func, start_file, preamble) tuples.
+            # if rhs_var is a param, also enumerate callers so each call site
+            # yields a distinct path (avoids shadowing when multiple callers
+            # invoke the same sink function, e.g. via function pointers).
+            trace_starts: list[tuple[str, str, str, list[TaintNode]]] = []
             for rhs_var in rhs_vars:
-                visited: set[tuple[str, str]] = set()  # (func, var)
+                trace_starts.append((rhs_var, func_name, file_path, []))
+                if self._is_param(rhs_var, func_name, file_path):
+                    for caller_func, caller_file, arg_expr in self._find_callers_with_args(func_name, rhs_var):
+                        preamble = [TaintNode(
+                            variable=f"{func_name}({rhs_var})",
+                            node_type="INTERMEDIATE",
+                            transform="param",
+                            file=file_path,
+                            function=func_name,
+                        )]
+                        trace_starts.append((arg_expr, caller_func, caller_file, preamble))
+
+            seen_sources: set[tuple[str, str]] = set()
+            for start_var, start_func, start_file, preamble in trace_starts:
+                visited: set[tuple[str, str]] = set()
                 chain = self._trace_backward(
-                    rhs_var, func_name, file_path,
+                    start_var, start_func, start_file,
                     max_depth, visited,
                 )
-                if chain:
-                    source_node = chain[0]
-                    source_node.node_type = "SOURCE"
-                    for step in chain[1:]:
-                        step.node_type = "INTERMEDIATE"
+                if not chain:
+                    continue
+                # dedupe by (source_var, source_function) per sink
+                key = (chain[0].variable, chain[0].function)
+                if key in seen_sources:
+                    continue
+                seen_sources.add(key)
 
-                    path = DataFlowPath(
-                        source=source_node,
-                        sink=sink_node,
-                        steps=chain[1:] if len(chain) > 1 else [],
-                    )
-                    paths.append(path)
-                    if len(paths) >= max_paths:
-                        break
+                full_chain = chain + preamble
+                source_node = full_chain[0]
+                source_node.node_type = "SOURCE"
+                for step in full_chain[1:]:
+                    step.node_type = "INTERMEDIATE"
+
+                path = DataFlowPath(
+                    source=source_node,
+                    sink=sink_node,
+                    steps=full_chain[1:] if len(full_chain) > 1 else [],
+                )
+                paths.append(path)
+                if len(paths) >= max_paths:
+                    break
 
         return paths
 
@@ -218,6 +245,23 @@ class TaintTracker:
             for p in params:
                 if p["function_name"]:
                     self._func_to_file[p["function_name"]] = rp
+
+        # second pass: build function-pointer alias map
+        # key: (file_path, caller_function, callee_var) → target_function
+        # e.g. in fnptr_dispatch: writer = write_timing_fn
+        #   → ("hw_model.c", "fnptr_dispatch", "writer") → "write_timing_fn"
+        self._fnptr_aliases: dict[tuple[str, str, str], str] = {}
+        for rp, assignments in self._file_assignments.items():
+            for a in assignments:
+                if not a["function"]:
+                    continue
+                # RHS must be exactly one bare identifier that names a known function
+                if a["rhs_call"]:
+                    continue
+                rhs = (a["rhs"] or "").strip()
+                if rhs in self._func_to_file:
+                    key = (rp, a["function"], a["lhs"])
+                    self._fnptr_aliases[key] = rhs
 
     def _scan_sinks(self) -> list[dict]:
         """Find all assignments whose LHS matches a sink pattern."""
@@ -550,20 +594,28 @@ class TaintTracker:
         results = []
         for file_path, calls in self._file_calls.items():
             for call in calls:
-                if call["callee_name"] == func_name:
-                    for arg in call["args"]:
-                        if arg["index"] == param_index:
-                            # reconstruct the full field access if needed
-                            arg_expr = arg["expression"]
-                            if "->" in param_var:
-                                suffix = param_var.split("->", 1)[1]
-                                if "->" not in arg_expr and "." not in arg_expr:
-                                    arg_expr = f"{arg_expr}->{suffix}"
-                            results.append((
-                                call["function"],
-                                file_path,
-                                arg_expr,
-                            ))
+                direct = call["callee_name"] == func_name
+                indirect = False
+                if not direct:
+                    # resolve function-pointer indirect call:
+                    # lookup (file, caller_func, callee_var) → target_func
+                    key = (file_path, call["function"], call["callee_name"])
+                    if self._fnptr_aliases.get(key) == func_name:
+                        indirect = True
+                if not (direct or indirect):
+                    continue
+                for arg in call["args"]:
+                    if arg["index"] == param_index:
+                        arg_expr = arg["expression"]
+                        if "->" in param_var:
+                            suffix = param_var.split("->", 1)[1]
+                            if "->" not in arg_expr and "." not in arg_expr:
+                                arg_expr = f"{arg_expr}->{suffix}"
+                        results.append((
+                            call["function"],
+                            file_path,
+                            arg_expr,
+                        ))
         return results
 
     def _find_cross_func_field_writers(

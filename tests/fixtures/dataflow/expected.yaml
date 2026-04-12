@@ -340,6 +340,38 @@ paths:
     min_depth: 3
     difficulty: hard
 
+  # ══════════════════════════════════════════════════════
+  # Function pointer indirect call (Gap A1)
+  # ══════════════════════════════════════════════════════
+
+  # 패턴: reg_writer_t writer = write_timing_fn; writer(regs, cfg->frequency)
+  # 설명: 함수 포인터 변수를 통한 간접 호출. writer → write_timing_fn 로컬 앨리어스 해석 필요.
+  - name: "fnptr local variable dispatch"
+    source: "cfg->frequency"
+    sink: "regs->regs[TIMING_REG]"
+    expected_function: "fnptr_dispatch"
+    requires: fnptr_tracking
+    min_depth: 3
+    difficulty: hard
+
+  # 패턴: ops.timing_fn = write_timing_fn; ops.timing_fn(regs, cfg->frequency)
+  # 설명: 구조체 필드에 함수 포인터를 저장하고 그 필드를 통해 호출.
+  - name: "fnptr struct field dispatch"
+    source: "cfg->frequency"
+    sink: "regs->regs[TIMING_REG]"
+    expected_function: "fnptr_struct_dispatch"
+    requires: fnptr_tracking
+    min_depth: 3
+    difficulty: hard
+
+  - name: "fnptr struct field dispatch mode"
+    source: "cfg->mode"
+    sink: "regs->regs[MODE_REG]"
+    expected_function: "fnptr_struct_dispatch"
+    requires: fnptr_tracking
+    min_depth: 3
+    difficulty: hard
+
 # Scoring: each found path = 1 point
 # Difficulty multiplier: easy=1, medium=2, hard=3
 # Total possible score: sum of all (1 * multiplier)

@@ -72,18 +72,26 @@ def expected():
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
-def _find_path(paths, source_substr: str, sink_substr: str = None, sink_pattern: str = None):
-    """Find a matching path by source/sink substring."""
+def _find_path(paths, source_substr: str, sink_substr: str = None, sink_pattern: str = None,
+               expected_function: str = None):
+    """Find a matching path by source/sink substring.
+
+    If expected_function is given, the path must involve that function
+    in its sink or any of its steps (inter-procedural attribution).
+    """
     import re
     for p in paths:
         if source_substr not in p.source.variable:
             continue
-        if sink_substr and sink_substr in p.sink.variable:
-            return p
-        if sink_pattern and re.search(sink_pattern, p.sink.variable):
-            return p
-        if not sink_substr and not sink_pattern:
-            return p
+        if sink_substr and sink_substr not in p.sink.variable:
+            continue
+        if sink_pattern and not re.search(sink_pattern, p.sink.variable):
+            continue
+        if expected_function:
+            funcs = {p.sink.function, p.source.function} | {s.function for s in p.steps}
+            if expected_function not in funcs:
+                continue
+        return p
     return None
 
 
@@ -183,7 +191,7 @@ class TestExtendedPatterns:
         _, _, paths = analysis_db
         for p in paths:
             if "cfg->frequency" in p.source.variable:
-                funcs = {p.sink.function} | {s.function for s in p.steps}
+                funcs = {p.sink.function, p.source.function} | {s.function for s in p.steps}
                 if "cache_config" in funcs or "apply_cached" in funcs:
                     return
         pytest.xfail("Global variable cross-function tracking not yet working")
@@ -276,12 +284,36 @@ class TestHardPatterns:
         found = None
         for p in paths:
             if "cfg->frequency" in p.source.variable:
-                funcs = {p.sink.function} | {s.function for s in p.steps}
+                funcs = {p.sink.function, p.source.function} | {s.function for s in p.steps}
                 if "config_to_fw" in funcs and "fw_to_hw" in funcs:
                     found = p
                     break
         if found is None:
             pytest.xfail("Two-layer cross-function tracking not yet working")
+
+
+class TestFnPtrTracking:
+    """Function pointer indirect call tracking (Gap A1)."""
+
+    def test_fnptr_local_dispatch(self, analysis_db):
+        """writer = write_timing_fn; writer(regs, cfg->frequency) → TIMING_REG"""
+        _, _, paths = analysis_db
+        for p in paths:
+            if "cfg->frequency" in p.source.variable and "regs->regs[TIMING_REG]" in p.sink.variable:
+                funcs = {p.sink.function, p.source.function} | {s.function for s in p.steps}
+                if "fnptr_dispatch" in funcs or "write_timing_fn" in funcs:
+                    return
+        pytest.xfail("Function pointer local variable dispatch not yet tracked")
+
+    def test_fnptr_struct_dispatch(self, analysis_db):
+        """ops.timing_fn = write_timing_fn; ops.timing_fn(regs, cfg->frequency)"""
+        _, _, paths = analysis_db
+        for p in paths:
+            if "cfg->frequency" in p.source.variable and "regs->regs[TIMING_REG]" in p.sink.variable:
+                funcs = {p.sink.function, p.source.function} | {s.function for s in p.steps}
+                if "fnptr_struct_dispatch" in funcs:
+                    return
+        pytest.xfail("Function pointer struct field dispatch not yet tracked")
 
 
 class TestEnumTracking:
@@ -563,8 +595,10 @@ class TestBenchmark:
             source = exp["source"]
             sink = exp.get("sink")
             sink_pat = exp.get("sink_pattern")
+            expected_fn = exp.get("expected_function")
 
-            found = _find_path(actual_paths, source, sink, sink_pat)
+            found = _find_path(actual_paths, source, sink, sink_pat,
+                               expected_function=expected_fn)
             status = "PASS" if found else "MISS"
             if found:
                 total_score += weight
