@@ -26,6 +26,7 @@ from cpp_analyzer.analysis.taint_tracker import TaintTracker
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures" / "dataflow"
 EXPECTED_PATH = FIXTURES_DIR / "expected.yaml"
+MULTIFILE_DIR = FIXTURES_DIR / "multifile"
 
 
 # ── fixtures ──────────────────────────────────────────────────────────────────
@@ -572,6 +573,94 @@ class TestConfigLanguage:
         co_dep = [s for s in specs if s.co_depends]
         assert len(co_dep) > 0, \
             "Expected at least one co-dependency from test fixtures"
+
+
+# ── multi-file fixture tests ─────────────────────────────────────────────────
+
+@pytest.fixture(scope="module")
+def multifile_db():
+    """Index the multi-file fixture directory and return (repo, pid, paths).
+
+    Verifies that cross-TU dataflow tracking works: config in one .c file,
+    intermediate in another, sink in a third.
+    """
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        db_path = f.name
+
+    repo = Repository(db_path)
+    repo.connect()
+    pid = repo.upsert_project("dataflow-multifile", str(MULTIFILE_DIR))
+
+    indexer = Indexer(repo, pid, MULTIFILE_DIR)
+    indexer.run(force=True)
+
+    source_patterns = [
+        {"name": "config_field", "regex": r"cfg->(\w+)"},
+    ]
+    sink_patterns = [
+        {"name": "reg_array", "regex": r"(?:regs|r|hw)->regs\["},
+        {"name": "fw_field", "regex": r"fw->(\w+)\s*="},
+        {"name": "REG_WRITE", "regex": r"REG_WRITE\s*\("},
+    ]
+
+    tracker = TaintTracker(repo, pid, source_patterns, sink_patterns)
+    paths = tracker.trace(max_depth=6, max_paths=200)
+
+    yield repo, pid, paths
+
+    repo.close()
+    os.unlink(db_path)
+
+
+class TestMultiFile:
+    """Cross-translation-unit dataflow tracking.
+
+    Simulates a realistic project layout: headers under include/, firmware
+    logic in fw.c, register writes in regs.c, callbacks in callbacks.c,
+    top-level driver in main.c.
+    """
+
+    def test_fw_clk_div_same_tu(self, multifile_db):
+        """cfg->frequency → fw->clk_div (single TU, fw.c)"""
+        _, _, paths = multifile_db
+        found = _find_path(paths, "cfg->frequency", "fw->clk_div")
+        assert found is not None, "Failed to trace cfg->frequency → fw->clk_div"
+
+    def test_direct_threshold_cross_tu_from_header(self, multifile_db):
+        """cfg->threshold → regs[THRESH_REG] (regs.c, headers from include/)"""
+        _, _, paths = multifile_db
+        found = _find_path(paths, "cfg->threshold", "regs->regs[THRESH_REG]")
+        assert found is not None, "Failed to trace cfg->threshold across headers"
+
+    def test_macro_sink_in_regs_tu(self, multifile_db):
+        """cfg->mode via REG_WRITE macro (defined in hw_regs.h, used in regs.c)"""
+        _, _, paths = multifile_db
+        found = _find_path(paths, "cfg->mode", sink_pattern=r"REG_WRITE")
+        assert found is not None, "Failed to trace cfg->mode through REG_WRITE macro"
+
+    def test_cross_tu_two_layer(self, multifile_db):
+        """cfg->frequency → fw_compute (fw.c) → regs_apply_timing (regs.c) → TIMING_REG.
+
+        Requires cross-TU field writer linkage: fw_compute writes fw->timing_val
+        in fw.c, regs_apply_timing reads fw->timing_val in regs.c.
+        """
+        _, _, paths = multifile_db
+        for p in paths:
+            if "cfg->frequency" in p.source.variable and "regs->regs[TIMING_REG]" in p.sink.variable:
+                funcs = {p.sink.function, p.source.function} | {s.function for s in p.steps}
+                if "fw_compute" in funcs or "regs_apply_timing" in funcs:
+                    return
+        pytest.xfail("Two-layer cross-TU tracking not yet resolving fw->timing_val across files")
+
+    def test_cross_tu_callback(self, multifile_db):
+        """cfg->enable → cb_fire (callbacks.c) via g_cb → handle_enable → CTRL_REG"""
+        _, _, paths = multifile_db
+        for p in paths:
+            if "cfg->enable" in p.source.variable and "regs->regs[CTRL_REG]" in p.sink.variable:
+                funcs = {p.sink.function, p.source.function} | {s.function for s in p.steps}
+                if "cb_fire" in funcs or "handle_enable" in funcs:
+                    return
+        pytest.xfail("Cross-TU callback tracking not yet working")
 
 
 # ── benchmark scoring ─────────────────────────────────────────────────────────
