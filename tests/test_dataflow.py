@@ -379,6 +379,33 @@ class TestCppDispatch:
         pytest.xfail("Pointer-to-member calls not resolved (requires runtime fn tracking)")
 
 
+class TestIfdefVariants:
+    """P4: #ifdef-guarded sinks — both branches must be discoverable."""
+
+    def test_ifdef_fast_branch(self, analysis_db):
+        """#ifdef USE_FAST_PATH branch: IF_FAST_REG"""
+        _, _, paths = analysis_db
+        for p in paths:
+            if "icfg->frequency" in p.source.variable and "IF_FAST_REG" in p.sink.variable:
+                return
+        pytest.fail("#ifdef USE_FAST_PATH sink not discovered")
+
+    def test_ifdef_else_branch(self, analysis_db):
+        """#else branch: IF_TIMING_REG"""
+        _, _, paths = analysis_db
+        for p in paths:
+            if "icfg->frequency" in p.source.variable and "IF_TIMING_REG" in p.sink.variable:
+                return
+        pytest.fail("#else branch sink not discovered")
+
+    def test_ifdef_nested_both(self, analysis_db):
+        """Both branches of #if defined(MODE_VARIANT_A) write IF_MODE_REG"""
+        _, _, paths = analysis_db
+        hits = [p for p in paths
+                if "icfg->mode" in p.source.variable and "IF_MODE_REG" in p.sink.variable]
+        assert len(hits) >= 2, f"expected ≥2 paths for nested #ifdef, got {len(hits)}"
+
+
 class TestAliasingAdvanced:
     """P2: conditional alias, linked-list walk, dynamic-index sinks."""
 
