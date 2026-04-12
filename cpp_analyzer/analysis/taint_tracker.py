@@ -212,11 +212,19 @@ class TaintTracker:
     def _load_all_files(self) -> None:
         """Parse all project files and cache assignments/calls."""
         files = self.repo.list_files(self.project_id)
-        for f in files:
-            rp = f["relative_path"]
-            if not rp.endswith((".c", ".cpp", ".cc", ".cxx", ".h", ".hpp", ".hxx")):
-                continue
+        exts = (".c", ".cpp", ".cc", ".cxx", ".h", ".hpp", ".hxx")
+        source_files = [f for f in files if f["relative_path"].endswith(exts)]
 
+        # B2: parallel parse pre-warm. tree-sitter's C parser releases the GIL,
+        # so parallel parse_file calls populate the module-level cache faster
+        # than a serial loop. Subsequent extractors run serially (GIL-bound).
+        if len(source_files) > 1:
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=min(8, len(source_files))) as ex:
+                list(ex.map(lambda f: ts_parser.parse_file(f["path"]), source_files))
+
+        for f in source_files:
+            rp = f["relative_path"]
             path = f["path"]
             root = ts_parser.parse_file(path)
             if root is None:
