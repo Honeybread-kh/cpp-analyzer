@@ -16,11 +16,34 @@ C_LANG = Language(tsc.language())
 
 _parser = Parser(C_LANG)
 
+# parse cache: path -> (mtime_ns, root_node). Invalidated automatically when
+# the file mtime changes. Caller can clear via clear_parse_cache(). Keeping
+# the Tree alive keeps root_node valid.
+_parse_cache: dict[str, tuple[int, Node]] = {}
+_parse_trees: dict[str, object] = {}
+
 
 def parse_file(path: str | Path) -> Node | None:
-    text = Path(path).read_bytes()
+    p = Path(path)
+    try:
+        mtime = p.stat().st_mtime_ns
+    except OSError:
+        return None
+    key = str(p.resolve())
+    cached = _parse_cache.get(key)
+    if cached is not None and cached[0] == mtime:
+        return cached[1]
+    text = p.read_bytes()
     tree = _parser.parse(text)
-    return tree.root_node
+    root = tree.root_node
+    _parse_cache[key] = (mtime, root)
+    _parse_trees[key] = tree  # keep Tree alive so Node stays valid
+    return root
+
+
+def clear_parse_cache() -> None:
+    _parse_cache.clear()
+    _parse_trees.clear()
 
 
 def parse_bytes(source: bytes) -> Node:

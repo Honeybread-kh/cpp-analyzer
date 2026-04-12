@@ -663,6 +663,22 @@ class TestMultiFile:
         pytest.xfail("Cross-TU callback tracking not yet working")
 
 
+class TestParseCache:
+    """Parser-level caching (B1: incremental analysis)."""
+
+    def test_parse_cache_hit(self):
+        from cpp_analyzer.analysis import ts_parser
+        ts_parser.clear_parse_cache()
+        p = str(FIXTURES_DIR / "hw_model.c")
+        n1 = ts_parser.parse_file(p)
+        n2 = ts_parser.parse_file(p)
+        assert n1 is not None and n2 is not None
+        assert id(n1) == id(n2), "Second parse should return cached Node"
+        assert len(ts_parser._parse_cache) >= 1
+        ts_parser.clear_parse_cache()
+        assert len(ts_parser._parse_cache) == 0
+
+
 # ── benchmark scoring ─────────────────────────────────────────────────────────
 
 class TestBenchmark:
