@@ -456,19 +456,32 @@ class TaintTracker:
         if self._is_param(var, func_name, file_path):
             callers = self._find_callers_with_args(func_name, var)
             for caller_func, caller_file, arg_expr in callers:
-                chain = self._trace_backward(
-                    arg_expr, caller_func, caller_file,
-                    depth - 1, visited,
-                )
-                if chain:
-                    chain.append(TaintNode(
-                        variable=f"{func_name}({var})",
-                        node_type="INTERMEDIATE",
-                        transform="param",
-                        file=file_path,
-                        function=func_name,
-                    ))
-                    return chain
+                # P1: if arg_expr is a composite expression (e.g. "v4 | 0x1u",
+                # "v2 + 1"), extract component identifiers and try each so
+                # deep param-propagation chains with arithmetic are traced.
+                arg_candidates = [arg_expr]
+                if any(c in arg_expr for c in "+-*/|&^<>!~()"):
+                    try:
+                        sub_vars = ts_parser._extract_variables(
+                            ts_parser.parse_bytes(arg_expr.encode())
+                        )
+                        arg_candidates.extend(v for v in sub_vars if v != arg_expr)
+                    except Exception:
+                        pass
+                for cand in arg_candidates:
+                    chain = self._trace_backward(
+                        cand, caller_func, caller_file,
+                        depth - 1, visited,
+                    )
+                    if chain:
+                        chain.append(TaintNode(
+                            variable=f"{func_name}({var})",
+                            node_type="INTERMEDIATE",
+                            transform="param",
+                            file=file_path,
+                            function=func_name,
+                        ))
+                        return chain
 
             # fallback: cross-function struct field linking
             # if var is a param field (e.g. fw->timing_val), search all
@@ -536,7 +549,11 @@ class TaintTracker:
                 if "->" not in rhs and "." not in rhs:
                     # skip numeric/string literals and macro constants
                     if not re.match(r'^[\d"\']', rhs) and rhs not in ("NULL", "nullptr", "0"):
-                        clean_rhs = rhs.lstrip("&*")
+                        clean_rhs = rhs.lstrip("&*").strip()
+                        # must be a single identifier — arithmetic/bitwise
+                        # expressions (e.g. `v5 << 2`) are not aliases.
+                        if not re.fullmatch(r'[A-Za-z_]\w*', clean_rhs):
+                            continue
                         # skip all-uppercase identifiers (likely #define constants)
                         if not re.match(r'^[A-Z_][A-Z0-9_]*$', clean_rhs):
                             alias_map.add(lhs, clean_rhs)

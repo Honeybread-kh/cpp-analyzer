@@ -1,0 +1,124 @@
+{
+  "score": 21,
+  "max_score": 21,
+  "pct": 100.0,
+  "total_paths_found": 14,
+  "results": [
+    {
+      "name": "direct threshold",
+      "difficulty": "easy",
+      "status": "PASS",
+      "requires": "basic"
+    },
+    {
+      "name": "direct dimension pack",
+      "difficulty": "easy",
+      "status": "PASS",
+      "requires": "basic"
+    },
+    {
+      "name": "direct dimension pack (height)",
+      "difficulty": "easy",
+      "status": "PASS",
+      "requires": "basic"
+    },
+    {
+      "name": "config to FW clk_div",
+      "difficulty": "easy",
+      "status": "PASS",
+      "requires": "basic"
+    },
+    {
+      "name": "config to FW processed_mode",
+      "difficulty": "easy",
+      "status": "PASS",
+      "requires": "basic"
+    },
+    {
+      "name": "alias register write",
+      "difficulty": "medium",
+      "status": "PASS",
+      "requires": "alias_tracking"
+    },
+    {
+      "name": "macro REG_WRITE frequency",
+      "difficulty": "medium",
+      "status": "PASS",
+      "requires": "macro_sink"
+    },
+    {
+      "name": "macro REG_WRITE mode",
+      "difficulty": "medium",
+      "status": "PASS",
+      "requires": "macro_sink"
+    },
+    {
+      "name": "conditional register write",
+      "difficulty": "medium",
+      "status": "PASS",
+      "requires": "conditional_tracking"
+    },
+    {
+      "name": "compound assignment chain",
+      "difficulty": "medium",
+      "status": "PASS",
+      "requires": "compound_assignment"
+    },
+    {
+      "name": "multi-hop: config \u2192 divider \u2192 timing \u2192 reg",
+      "difficulty": "hard",
+      "status": "PASS",
+      "requires": "inter_procedural"
+    },
+    {
+      "name": "two-layer: config \u2192 fw \u2192 hw register",
+      "difficulty": "hard",
+      "status": "PASS",
+      "requires": "inter_procedural"
+    }
+  ],
+  "gaps": [],
+  "timestamp": "2026-04-12T05:19:33.787400Z",
+  "commit": "417f656d34827811bf16143514d57d679d4dc358",
+  "branch": "main",
+  "by_difficulty": {
+    "easy": {
+      "pass": 5,
+      "total": 5
+    },
+    "medium": {
+      "pass": 5,
+      "total": 5
+    },
+    "hard": {
+      "pass": 2,
+      "total": 2
+    }
+  },
+  "by_requires": {
+    "basic": {
+      "pass": 5,
+      "total": 5
+    },
+    "alias_tracking": {
+      "pass": 1,
+      "total": 1
+    },
+    "macro_sink": {
+      "pass": 2,
+      "total": 2
+    },
+    "conditional_tracking": {
+      "pass": 1,
+      "total": 1
+    },
+    "compound_assignment": {
+      "pass": 1,
+      "total": 1
+    },
+    "inter_procedural": {
+      "pass": 2,
+      "total": 2
+    }
+  }
+}

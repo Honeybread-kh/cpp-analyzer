@@ -57,7 +57,7 @@ def analysis_db():
     ]
 
     tracker = TaintTracker(repo, pid, source_patterns, sink_patterns)
-    paths = tracker.trace(max_depth=5, max_paths=200)
+    paths = tracker.trace(max_depth=10, max_paths=500)
 
     yield repo, pid, paths
 
@@ -316,6 +316,36 @@ class TestFnPtrTracking:
                 if "fnptr_struct_dispatch" in funcs:
                     return
         pytest.xfail("Function pointer struct field dispatch not yet tracked")
+
+
+class TestDeepChain:
+    """P1: deep call chain (4~6 hop) + mutual recursion."""
+
+    def test_five_hop_param_chain(self, analysis_db):
+        """dcfg->frequency → dc_stage1 → ... → dc_stage5 → DC_TIMING_REG"""
+        _, _, paths = analysis_db
+        for p in paths:
+            if "dcfg->frequency" not in p.source.variable:
+                continue
+            if "DC_TIMING_REG" not in p.sink.variable:
+                continue
+            funcs = {p.sink.function, p.source.function} | {s.function for s in p.steps}
+            if {"dc_stage1", "dc_stage5"}.issubset(funcs):
+                return
+        pytest.fail("5-hop param-propagation chain not traced end-to-end")
+
+    def test_mutual_recursion(self, analysis_db):
+        """dcfg->mode → recurse_odd/recurse_even → DC_MODE_REG"""
+        _, _, paths = analysis_db
+        for p in paths:
+            if "dcfg->mode" not in p.source.variable:
+                continue
+            if "DC_MODE_REG" not in p.sink.variable:
+                continue
+            funcs = {p.sink.function, p.source.function} | {s.function for s in p.steps}
+            if "recurse_odd" in funcs or "recurse_even" in funcs:
+                return
+        pytest.fail("Mutual recursion taint path not found")
 
 
 class TestEnumTracking:

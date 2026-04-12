@@ -1,0 +1,133 @@
+{
+  "score": 15,
+  "max_score": 21,
+  "pct": 71.4,
+  "total_paths_found": 11,
+  "results": [
+    {
+      "name": "direct threshold",
+      "difficulty": "easy",
+      "status": "PASS",
+      "requires": "basic"
+    },
+    {
+      "name": "direct dimension pack",
+      "difficulty": "easy",
+      "status": "PASS",
+      "requires": "basic"
+    },
+    {
+      "name": "direct dimension pack (height)",
+      "difficulty": "easy",
+      "status": "PASS",
+      "requires": "basic"
+    },
+    {
+      "name": "config to FW clk_div",
+      "difficulty": "easy",
+      "status": "PASS",
+      "requires": "basic"
+    },
+    {
+      "name": "config to FW processed_mode",
+      "difficulty": "easy",
+      "status": "PASS",
+      "requires": "basic"
+    },
+    {
+      "name": "alias register write",
+      "difficulty": "medium",
+      "status": "PASS",
+      "requires": "alias_tracking"
+    },
+    {
+      "name": "macro REG_WRITE frequency",
+      "difficulty": "medium",
+      "status": "PASS",
+      "requires": "macro_sink"
+    },
+    {
+      "name": "macro REG_WRITE mode",
+      "difficulty": "medium",
+      "status": "PASS",
+      "requires": "macro_sink"
+    },
+    {
+      "name": "multi-hop: config \u2192 divider \u2192 timing \u2192 reg",
+      "difficulty": "hard",
+      "status": "MISS",
+      "requires": "inter_procedural"
+    },
+    {
+      "name": "two-layer: config \u2192 fw \u2192 hw register",
+      "difficulty": "hard",
+      "status": "MISS",
+      "requires": "inter_procedural"
+    },
+    {
+      "name": "conditional register write",
+      "difficulty": "medium",
+      "status": "PASS",
+      "requires": "conditional_tracking"
+    },
+    {
+      "name": "compound assignment chain",
+      "difficulty": "medium",
+      "status": "PASS",
+      "requires": "compound_assignment"
+    }
+  ],
+  "gaps": [
+    {
+      "name": "multi-hop: config \u2192 divider \u2192 timing \u2192 reg",
+      "requires": "inter_procedural"
+    },
+    {
+      "name": "two-layer: config \u2192 fw \u2192 hw register",
+      "requires": "inter_procedural"
+    }
+  ],
+  "timestamp": "2026-04-11T01:49:09.996528Z",
+  "commit": "b605e83c34f4e50440b93a7dc2c04db24bdf9968",
+  "branch": "main",
+  "by_difficulty": {
+    "easy": {
+      "pass": 5,
+      "total": 5
+    },
+    "medium": {
+      "pass": 5,
+      "total": 5
+    },
+    "hard": {
+      "pass": 0,
+      "total": 2
+    }
+  },
+  "by_requires": {
+    "basic": {
+      "pass": 5,
+      "total": 5
+    },
+    "alias_tracking": {
+      "pass": 1,
+      "total": 1
+    },
+    "macro_sink": {
+      "pass": 2,
+      "total": 2
+    },
+    "inter_procedural": {
+      "pass": 0,
+      "total": 2
+    },
+    "conditional_tracking": {
+      "pass": 1,
+      "total": 1
+    },
+    "compound_assignment": {
+      "pass": 1,
+      "total": 1
+    }
+  }
+}

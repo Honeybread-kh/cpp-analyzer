@@ -1,0 +1,408 @@
+{
+  "score": 97,
+  "max_score": 97,
+  "pct": 100.0,
+  "total_paths_found": 59,
+  "results": [
+    {
+      "name": "direct threshold",
+      "difficulty": "easy",
+      "status": "PASS",
+      "requires": "basic"
+    },
+    {
+      "name": "direct dimension pack",
+      "difficulty": "easy",
+      "status": "PASS",
+      "requires": "basic"
+    },
+    {
+      "name": "direct dimension pack (height)",
+      "difficulty": "easy",
+      "status": "PASS",
+      "requires": "basic"
+    },
+    {
+      "name": "config to FW clk_div",
+      "difficulty": "easy",
+      "status": "PASS",
+      "requires": "basic"
+    },
+    {
+      "name": "config to FW processed_mode",
+      "difficulty": "easy",
+      "status": "PASS",
+      "requires": "basic"
+    },
+    {
+      "name": "alias register write",
+      "difficulty": "medium",
+      "status": "PASS",
+      "requires": "alias_tracking"
+    },
+    {
+      "name": "macro REG_WRITE frequency",
+      "difficulty": "medium",
+      "status": "PASS",
+      "requires": "macro_sink"
+    },
+    {
+      "name": "macro REG_WRITE mode",
+      "difficulty": "medium",
+      "status": "PASS",
+      "requires": "macro_sink"
+    },
+    {
+      "name": "conditional register write",
+      "difficulty": "medium",
+      "status": "PASS",
+      "requires": "conditional_tracking"
+    },
+    {
+      "name": "compound assignment chain",
+      "difficulty": "medium",
+      "status": "PASS",
+      "requires": "compound_assignment"
+    },
+    {
+      "name": "multi-hop: config \u2192 divider \u2192 timing \u2192 reg",
+      "difficulty": "hard",
+      "status": "PASS",
+      "requires": "inter_procedural"
+    },
+    {
+      "name": "two-layer: config \u2192 fw \u2192 hw register",
+      "difficulty": "hard",
+      "status": "PASS",
+      "requires": "inter_procedural"
+    },
+    {
+      "name": "ternary operator tracking",
+      "difficulty": "medium",
+      "status": "PASS",
+      "requires": "ternary_tracking"
+    },
+    {
+      "name": "array element constant index",
+      "difficulty": "medium",
+      "status": "PASS",
+      "requires": "array_element_tracking"
+    },
+    {
+      "name": "bitfield shift+mask packing",
+      "difficulty": "medium",
+      "status": "PASS",
+      "requires": "bitfield_tracking"
+    },
+    {
+      "name": "global variable relay",
+      "difficulty": "hard",
+      "status": "PASS",
+      "requires": "global_tracking"
+    },
+    {
+      "name": "struct copy field access",
+      "difficulty": "medium",
+      "status": "PASS",
+      "requires": "struct_copy_tracking"
+    },
+    {
+      "name": "phi-node multiple reaching defs",
+      "difficulty": "medium",
+      "status": "PASS",
+      "requires": "multi_reaching_def"
+    },
+    {
+      "name": "range clamp frequency",
+      "difficulty": "medium",
+      "status": "PASS",
+      "requires": "range_tracking"
+    },
+    {
+      "name": "range saturate threshold",
+      "difficulty": "medium",
+      "status": "PASS",
+      "requires": "range_tracking"
+    },
+    {
+      "name": "dependency freq+mode to ctrl",
+      "difficulty": "medium",
+      "status": "PASS",
+      "requires": "dependency_tracking"
+    },
+    {
+      "name": "dependency enable gates frequency",
+      "difficulty": "medium",
+      "status": "PASS",
+      "requires": "dependency_tracking"
+    },
+    {
+      "name": "enum config op_mode",
+      "difficulty": "easy",
+      "status": "PASS",
+      "requires": "enum_tracking"
+    },
+    {
+      "name": "enum config clk_src",
+      "difficulty": "easy",
+      "status": "PASS",
+      "requires": "enum_tracking"
+    },
+    {
+      "name": "enum range power_level",
+      "difficulty": "easy",
+      "status": "PASS",
+      "requires": "enum_tracking"
+    },
+    {
+      "name": "ternary clamp frequency",
+      "difficulty": "medium",
+      "status": "PASS",
+      "requires": "ternary_range"
+    },
+    {
+      "name": "CLAMP macro threshold",
+      "difficulty": "medium",
+      "status": "PASS",
+      "requires": "clamp_macro"
+    },
+    {
+      "name": "volatile MMIO direct write",
+      "difficulty": "medium",
+      "status": "PASS",
+      "requires": "volatile_mmio"
+    },
+    {
+      "name": "volatile MMIO mode write",
+      "difficulty": "medium",
+      "status": "PASS",
+      "requires": "volatile_mmio"
+    },
+    {
+      "name": "MIN/MAX macro range",
+      "difficulty": "medium",
+      "status": "PASS",
+      "requires": "minmax_macro"
+    },
+    {
+      "name": "union aliasing mode via raw",
+      "difficulty": "hard",
+      "status": "PASS",
+      "requires": "union_aliasing"
+    },
+    {
+      "name": "union aliasing frequency via raw",
+      "difficulty": "hard",
+      "status": "PASS",
+      "requires": "union_aliasing"
+    },
+    {
+      "name": "fnptr local variable dispatch",
+      "difficulty": "hard",
+      "status": "PASS",
+      "requires": "fnptr_tracking"
+    },
+    {
+      "name": "fnptr struct field dispatch",
+      "difficulty": "hard",
+      "status": "PASS",
+      "requires": "fnptr_tracking"
+    },
+    {
+      "name": "fnptr struct field dispatch mode",
+      "difficulty": "hard",
+      "status": "PASS",
+      "requires": "fnptr_tracking"
+    },
+    {
+      "name": "macro expansion write freq",
+      "difficulty": "hard",
+      "status": "PASS",
+      "requires": "macro_expansion"
+    },
+    {
+      "name": "macro expansion write mode",
+      "difficulty": "hard",
+      "status": "PASS",
+      "requires": "macro_expansion"
+    },
+    {
+      "name": "ptr arith via aliased base freq",
+      "difficulty": "medium",
+      "status": "PASS",
+      "requires": "ptr_arith_tracking"
+    },
+    {
+      "name": "ptr arith via aliased base mode",
+      "difficulty": "medium",
+      "status": "PASS",
+      "requires": "ptr_arith_tracking"
+    },
+    {
+      "name": "ptr arith volatile MMIO offset",
+      "difficulty": "medium",
+      "status": "PASS",
+      "requires": "ptr_arith_tracking"
+    },
+    {
+      "name": "callback via global fnptr",
+      "difficulty": "hard",
+      "status": "PASS",
+      "requires": "callback_tracking"
+    },
+    {
+      "name": "cast direct frequency",
+      "difficulty": "medium",
+      "status": "PASS",
+      "requires": "cast_tracking"
+    },
+    {
+      "name": "cast parenthesized mode",
+      "difficulty": "medium",
+      "status": "PASS",
+      "requires": "cast_tracking"
+    },
+    {
+      "name": "cast chained through local",
+      "difficulty": "medium",
+      "status": "PASS",
+      "requires": "cast_tracking"
+    },
+    {
+      "name": "struct array cross-func freq",
+      "difficulty": "hard",
+      "status": "PASS",
+      "requires": "struct_array_indexing"
+    },
+    {
+      "name": "struct array cross-func mode",
+      "difficulty": "hard",
+      "status": "PASS",
+      "requires": "struct_array_indexing"
+    }
+  ],
+  "gaps": [],
+  "timestamp": "2026-04-12T23:18:04.180607Z",
+  "commit": "7a92e6641169052ddeea1442ed8b3c3ec3e44686",
+  "branch": "main",
+  "by_difficulty": {
+    "easy": {
+      "pass": 8,
+      "total": 8
+    },
+    "medium": {
+      "pass": 25,
+      "total": 25
+    },
+    "hard": {
+      "pass": 13,
+      "total": 13
+    }
+  },
+  "by_requires": {
+    "basic": {
+      "pass": 5,
+      "total": 5
+    },
+    "alias_tracking": {
+      "pass": 1,
+      "total": 1
+    },
+    "macro_sink": {
+      "pass": 2,
+      "total": 2
+    },
+    "conditional_tracking": {
+      "pass": 1,
+      "total": 1
+    },
+    "compound_assignment": {
+      "pass": 1,
+      "total": 1
+    },
+    "inter_procedural": {
+      "pass": 2,
+      "total": 2
+    },
+    "ternary_tracking": {
+      "pass": 1,
+      "total": 1
+    },
+    "array_element_tracking": {
+      "pass": 1,
+      "total": 1
+    },
+    "bitfield_tracking": {
+      "pass": 1,
+      "total": 1
+    },
+    "global_tracking": {
+      "pass": 1,
+      "total": 1
+    },
+    "struct_copy_tracking": {
+      "pass": 1,
+      "total": 1
+    },
+    "multi_reaching_def": {
+      "pass": 1,
+      "total": 1
+    },
+    "range_tracking": {
+      "pass": 2,
+      "total": 2
+    },
+    "dependency_tracking": {
+      "pass": 2,
+      "total": 2
+    },
+    "enum_tracking": {
+      "pass": 3,
+      "total": 3
+    },
+    "ternary_range": {
+      "pass": 1,
+      "total": 1
+    },
+    "clamp_macro": {
+      "pass": 1,
+      "total": 1
+    },
+    "volatile_mmio": {
+      "pass": 2,
+      "total": 2
+    },
+    "minmax_macro": {
+      "pass": 1,
+      "total": 1
+    },
+    "union_aliasing": {
+      "pass": 2,
+      "total": 2
+    },
+    "fnptr_tracking": {
+      "pass": 3,
+      "total": 3
+    },
+    "macro_expansion": {
+      "pass": 2,
+      "total": 2
+    },
+    "ptr_arith_tracking": {
+      "pass": 3,
+      "total": 3
+    },
+    "callback_tracking": {
+      "pass": 1,
+      "total": 1
+    },
+    "cast_tracking": {
+      "pass": 3,
+      "total": 3
+    },
+    "struct_array_indexing": {
+      "pass": 2,
+      "total": 2
+    }
+  }
+}

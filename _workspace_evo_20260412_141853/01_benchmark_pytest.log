@@ -1,0 +1,22 @@
+warning: The `tool.uv.dev-dependencies` field (used in `pyproject.toml`) is deprecated and will be removed in a future release; use `dependency-groups.dev` instead
+============================= test session starts ==============================
+platform darwin -- Python 3.11.15, pytest-9.0.2, pluggy-1.6.0 -- /Users/kwanghyunchoi/00_work/git_hb/mcp/cpp-analyzer/.venv/bin/python3
+cachedir: .pytest_cache
+rootdir: /Users/kwanghyunchoi/00_work/git_hb/mcp/cpp-analyzer
+configfile: pyproject.toml
+plugins: anyio-4.13.0
+collecting ... collected 11 items
+
+tests/test_dataflow.py::TestDirectPatterns::test_direct_threshold PASSED [  9%]
+tests/test_dataflow.py::TestDirectPatterns::test_direct_width PASSED     [ 18%]
+tests/test_dataflow.py::TestDirectPatterns::test_direct_height PASSED    [ 27%]
+tests/test_dataflow.py::TestDirectPatterns::test_config_to_fw_clkdiv PASSED [ 36%]
+tests/test_dataflow.py::TestDirectPatterns::test_config_to_fw_mode PASSED [ 45%]
+tests/test_dataflow.py::TestMediumPatterns::test_alias_register_write PASSED [ 54%]
+tests/test_dataflow.py::TestMediumPatterns::test_macro_reg_write PASSED  [ 63%]
+tests/test_dataflow.py::TestMediumPatterns::test_conditional_write PASSED [ 72%]
+tests/test_dataflow.py::TestHardPatterns::test_multi_hop XFAIL (Inte...) [ 81%]
+tests/test_dataflow.py::TestHardPatterns::test_two_layer XFAIL (Two-...) [ 90%]
+tests/test_dataflow.py::TestBenchmark::test_benchmark_score PASSED       [100%]
+
+========================= 9 passed, 2 xfailed in 1.94s =========================

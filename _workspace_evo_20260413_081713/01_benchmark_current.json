@@ -1,0 +1,238 @@
+{
+  "score": 45,
+  "max_score": 45,
+  "pct": 100.0,
+  "total_paths_found": 29,
+  "results": [
+    {
+      "name": "direct threshold",
+      "difficulty": "easy",
+      "status": "PASS",
+      "requires": "basic"
+    },
+    {
+      "name": "direct dimension pack",
+      "difficulty": "easy",
+      "status": "PASS",
+      "requires": "basic"
+    },
+    {
+      "name": "direct dimension pack (height)",
+      "difficulty": "easy",
+      "status": "PASS",
+      "requires": "basic"
+    },
+    {
+      "name": "config to FW clk_div",
+      "difficulty": "easy",
+      "status": "PASS",
+      "requires": "basic"
+    },
+    {
+      "name": "config to FW processed_mode",
+      "difficulty": "easy",
+      "status": "PASS",
+      "requires": "basic"
+    },
+    {
+      "name": "alias register write",
+      "difficulty": "medium",
+      "status": "PASS",
+      "requires": "alias_tracking"
+    },
+    {
+      "name": "macro REG_WRITE frequency",
+      "difficulty": "medium",
+      "status": "PASS",
+      "requires": "macro_sink"
+    },
+    {
+      "name": "macro REG_WRITE mode",
+      "difficulty": "medium",
+      "status": "PASS",
+      "requires": "macro_sink"
+    },
+    {
+      "name": "conditional register write",
+      "difficulty": "medium",
+      "status": "PASS",
+      "requires": "conditional_tracking"
+    },
+    {
+      "name": "compound assignment chain",
+      "difficulty": "medium",
+      "status": "PASS",
+      "requires": "compound_assignment"
+    },
+    {
+      "name": "multi-hop: config \u2192 divider \u2192 timing \u2192 reg",
+      "difficulty": "hard",
+      "status": "PASS",
+      "requires": "inter_procedural"
+    },
+    {
+      "name": "two-layer: config \u2192 fw \u2192 hw register",
+      "difficulty": "hard",
+      "status": "PASS",
+      "requires": "inter_procedural"
+    },
+    {
+      "name": "ternary operator tracking",
+      "difficulty": "medium",
+      "status": "PASS",
+      "requires": "ternary_tracking"
+    },
+    {
+      "name": "array element constant index",
+      "difficulty": "medium",
+      "status": "PASS",
+      "requires": "array_element_tracking"
+    },
+    {
+      "name": "bitfield shift+mask packing",
+      "difficulty": "medium",
+      "status": "PASS",
+      "requires": "bitfield_tracking"
+    },
+    {
+      "name": "global variable relay",
+      "difficulty": "hard",
+      "status": "PASS",
+      "requires": "global_tracking"
+    },
+    {
+      "name": "struct copy field access",
+      "difficulty": "medium",
+      "status": "PASS",
+      "requires": "struct_copy_tracking"
+    },
+    {
+      "name": "phi-node multiple reaching defs",
+      "difficulty": "medium",
+      "status": "PASS",
+      "requires": "multi_reaching_def"
+    },
+    {
+      "name": "range clamp frequency",
+      "difficulty": "medium",
+      "status": "PASS",
+      "requires": "range_tracking"
+    },
+    {
+      "name": "range saturate threshold",
+      "difficulty": "medium",
+      "status": "PASS",
+      "requires": "range_tracking"
+    },
+    {
+      "name": "dependency freq+mode to ctrl",
+      "difficulty": "medium",
+      "status": "PASS",
+      "requires": "dependency_tracking"
+    },
+    {
+      "name": "dependency enable gates frequency",
+      "difficulty": "medium",
+      "status": "PASS",
+      "requires": "dependency_tracking"
+    },
+    {
+      "name": "enum config op_mode",
+      "difficulty": "easy",
+      "status": "PASS",
+      "requires": "enum_tracking"
+    },
+    {
+      "name": "enum config clk_src",
+      "difficulty": "easy",
+      "status": "PASS",
+      "requires": "enum_tracking"
+    },
+    {
+      "name": "enum range power_level",
+      "difficulty": "easy",
+      "status": "PASS",
+      "requires": "enum_tracking"
+    }
+  ],
+  "gaps": [],
+  "timestamp": "2026-04-12T15:33:49.909236Z",
+  "commit": "9e0fb78a9a3316b58c83f3640c5186885cfb02ce",
+  "branch": "main",
+  "by_difficulty": {
+    "easy": {
+      "pass": 8,
+      "total": 8
+    },
+    "medium": {
+      "pass": 14,
+      "total": 14
+    },
+    "hard": {
+      "pass": 3,
+      "total": 3
+    }
+  },
+  "by_requires": {
+    "basic": {
+      "pass": 5,
+      "total": 5
+    },
+    "alias_tracking": {
+      "pass": 1,
+      "total": 1
+    },
+    "macro_sink": {
+      "pass": 2,
+      "total": 2
+    },
+    "conditional_tracking": {
+      "pass": 1,
+      "total": 1
+    },
+    "compound_assignment": {
+      "pass": 1,
+      "total": 1
+    },
+    "inter_procedural": {
+      "pass": 2,
+      "total": 2
+    },
+    "ternary_tracking": {
+      "pass": 1,
+      "total": 1
+    },
+    "array_element_tracking": {
+      "pass": 1,
+      "total": 1
+    },
+    "bitfield_tracking": {
+      "pass": 1,
+      "total": 1
+    },
+    "global_tracking": {
+      "pass": 1,
+      "total": 1
+    },
+    "struct_copy_tracking": {
+      "pass": 1,
+      "total": 1
+    },
+    "multi_reaching_def": {
+      "pass": 1,
+      "total": 1
+    },
+    "range_tracking": {
+      "pass": 2,
+      "total": 2
+    },
+    "dependency_tracking": {
+      "pass": 2,
+      "total": 2
+    },
+    "enum_tracking": {
+      "pass": 3,
+      "total": 3
+    }
+  }
+}

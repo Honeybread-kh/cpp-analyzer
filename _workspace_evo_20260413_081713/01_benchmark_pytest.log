@@ -1,0 +1,47 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.11.15, pytest-9.0.2, pluggy-1.6.0 -- /Users/kwanghyunchoi/00_work/git_hb/mcp/cpp-analyzer/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /Users/kwanghyunchoi/00_work/git_hb/mcp/cpp-analyzer
+configfile: pyproject.toml
+plugins: anyio-4.13.0
+collecting ... collected 37 items
+
+tests/test_dataflow.py::TestDirectPatterns::test_direct_threshold PASSED [  2%]
+tests/test_dataflow.py::TestDirectPatterns::test_direct_width PASSED     [  5%]
+tests/test_dataflow.py::TestDirectPatterns::test_direct_height PASSED    [  8%]
+tests/test_dataflow.py::TestDirectPatterns::test_config_to_fw_clkdiv PASSED [ 10%]
+tests/test_dataflow.py::TestDirectPatterns::test_config_to_fw_mode PASSED [ 13%]
+tests/test_dataflow.py::TestMediumPatterns::test_alias_register_write PASSED [ 16%]
+tests/test_dataflow.py::TestMediumPatterns::test_macro_reg_write PASSED  [ 18%]
+tests/test_dataflow.py::TestMediumPatterns::test_conditional_write PASSED [ 21%]
+tests/test_dataflow.py::TestExtendedPatterns::test_ternary PASSED        [ 24%]
+tests/test_dataflow.py::TestExtendedPatterns::test_array_element PASSED  [ 27%]
+tests/test_dataflow.py::TestExtendedPatterns::test_bitfield PASSED       [ 29%]
+tests/test_dataflow.py::TestExtendedPatterns::test_global_variable PASSED [ 32%]
+tests/test_dataflow.py::TestExtendedPatterns::test_struct_copy PASSED    [ 35%]
+tests/test_dataflow.py::TestExtendedPatterns::test_phi_node PASSED       [ 37%]
+tests/test_dataflow.py::TestRangePatterns::test_range_clamp_frequency PASSED [ 40%]
+tests/test_dataflow.py::TestRangePatterns::test_range_saturate_threshold PASSED [ 43%]
+tests/test_dataflow.py::TestDependencyPatterns::test_dependency_freq_mode_ctrl PASSED [ 45%]
+tests/test_dataflow.py::TestDependencyPatterns::test_dependency_enable_gates_freq PASSED [ 48%]
+tests/test_dataflow.py::TestHardPatterns::test_multi_hop PASSED          [ 51%]
+tests/test_dataflow.py::TestHardPatterns::test_two_layer PASSED          [ 54%]
+tests/test_dataflow.py::TestEnumTracking::test_enum_op_mode PASSED       [ 56%]
+tests/test_dataflow.py::TestEnumTracking::test_enum_clk_src PASSED       [ 59%]
+tests/test_dataflow.py::TestEnumTracking::test_enum_range_power PASSED   [ 62%]
+tests/test_dataflow.py::TestConfigSpecGeneration::test_op_mode_enum_values PASSED [ 64%]
+tests/test_dataflow.py::TestConfigSpecGeneration::test_power_level_range PASSED [ 67%]
+tests/test_dataflow.py::TestConfigSpecGeneration::test_description_has_sink_info PASSED [ 70%]
+tests/test_dataflow.py::TestConfigSpecGeneration::test_enum_description_includes_values PASSED [ 72%]
+tests/test_dataflow.py::TestReverseTrace::test_reverse_trace_finds_sources PASSED [ 75%]
+tests/test_dataflow.py::TestReverseTrace::test_reverse_trace_groups_by_sink PASSED [ 78%]
+tests/test_dataflow.py::TestConfigExport::test_csv_export PASSED         [ 81%]
+tests/test_dataflow.py::TestConfigExport::test_json_export PASSED        [ 83%]
+tests/test_dataflow.py::TestConfigExport::test_yaml_export PASSED        [ 86%]
+tests/test_dataflow.py::TestConfigLanguage::test_language_has_config_fields PASSED [ 89%]
+tests/test_dataflow.py::TestConfigLanguage::test_language_fields_have_name_and_type PASSED [ 91%]
+tests/test_dataflow.py::TestConfigLanguage::test_gating_detected PASSED  [ 94%]
+tests/test_dataflow.py::TestConfigLanguage::test_co_dependency_detected PASSED [ 97%]
+tests/test_dataflow.py::TestBenchmark::test_benchmark_score PASSED       [100%]
+
+============================== 37 passed in 0.28s ==============================
