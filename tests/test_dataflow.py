@@ -663,6 +663,60 @@ class TestMultiFile:
         pytest.xfail("Cross-TU callback tracking not yet working")
 
 
+class TestLargeCodebase:
+    """D1: synthetic large-codebase validation.
+
+    Generates N modules that each taint a unique config field into a unique
+    register write, then asserts the tracker finds all paths within a
+    reasonable wall-clock budget.
+    """
+
+    def test_synthetic_50_modules(self, tmp_path):
+        import time
+
+        N = 50
+        src_dir = tmp_path / "synth"
+        src_dir.mkdir()
+        header = src_dir / "hw.h"
+        header.write_text(
+            "#ifndef HW_H\n#define HW_H\n"
+            "typedef struct { int fields[256]; } Config;\n"
+            "typedef struct { volatile unsigned int regs[256]; } HwRegs;\n"
+            "#endif\n"
+        )
+        for i in range(N):
+            (src_dir / f"mod_{i}.c").write_text(
+                f'#include "hw.h"\n'
+                f"void apply_{i}(Config* cfg, HwRegs* regs) {{\n"
+                f"    regs->regs[{i}] = cfg->fields[{i}] << 2;\n"
+                f"}}\n"
+            )
+
+        db_path = str(tmp_path / "synth.db")
+        repo = Repository(db_path)
+        repo.connect()
+        pid = repo.upsert_project("synth", str(src_dir))
+
+        t0 = time.perf_counter()
+        Indexer(repo, pid, src_dir).run(force=True)
+        t_index = time.perf_counter() - t0
+
+        source_patterns = [{"name": "cfg_field", "regex": r"cfg->fields\[(\d+)\]"}]
+        sink_patterns = [{"name": "reg_array", "regex": r"regs->regs\["}]
+
+        t0 = time.perf_counter()
+        tracker = TaintTracker(repo, pid, source_patterns, sink_patterns)
+        paths = tracker.trace(max_depth=3, max_paths=500)
+        t_trace = time.perf_counter() - t0
+
+        repo.close()
+
+        assert len(paths) >= N, f"expected ≥{N} paths, got {len(paths)}"
+        # Generous budget: CI machines vary. The point is to catch >10× regressions.
+        assert t_index < 30.0, f"index took {t_index:.2f}s for {N} modules"
+        assert t_trace < 30.0, f"trace took {t_trace:.2f}s for {N} modules"
+
+
 class TestParseCache:
     """Parser-level caching (B1: incremental analysis)."""
 
