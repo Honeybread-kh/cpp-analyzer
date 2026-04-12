@@ -406,6 +406,49 @@ class TestIfdefVariants:
         assert len(hits) >= 2, f"expected ≥2 paths for nested #ifdef, got {len(hits)}"
 
 
+class TestMultiCallback:
+    """P5: multi-callback array, bitfield struct sink, flexible array."""
+
+    def test_multi_cb_timing(self, analysis_db):
+        """p5_register_cb(cb_timing) and (cb_mode) — fire should reach cb_timing."""
+        _, _, paths = analysis_db
+        for p in paths:
+            if "pcfg->frequency" in p.source.variable and "P5_TIMING_REG" in p.sink.variable:
+                funcs = {p.sink.function} | {s.function for s in p.steps}
+                if "cb_timing" in funcs:
+                    return
+        pytest.fail("cb_timing not reached via array-registrar fnptr dispatch")
+
+    def test_multi_cb_mode(self, analysis_db):
+        _, _, paths = analysis_db
+        for p in paths:
+            if "pcfg->frequency" in p.source.variable and "P5_MODE_REG" in p.sink.variable:
+                funcs = {p.sink.function} | {s.function for s in p.steps}
+                if "cb_mode" in funcs:
+                    return
+        pytest.fail("cb_mode not reached via array-registrar fnptr dispatch")
+
+    def test_bitfield_struct_sink(self, analysis_db):
+        """pk.b = pcfg->frequency; regs[...] = *(uint32_t*)&pk"""
+        _, _, paths = analysis_db
+        for p in paths:
+            if ("pcfg->frequency" in p.source.variable
+                    and "P5_TIMING_REG" in p.sink.variable
+                    and p.sink.function == "p5_bitfield_write"):
+                return
+        pytest.fail("Bitfield/type-punning sink path not traced")
+
+    def test_flexible_array(self, analysis_db):
+        """m->data[0] = pcfg->mode; regs[...] = m->data[0]"""
+        _, _, paths = analysis_db
+        for p in paths:
+            if ("pcfg->mode" in p.source.variable
+                    and "P5_MODE_REG" in p.sink.variable
+                    and p.sink.function == "p5_fam_write"):
+                return
+        pytest.fail("Flexible-array-member sink path not traced")
+
+
 class TestAliasingAdvanced:
     """P2: conditional alias, linked-list walk, dynamic-index sinks."""
 

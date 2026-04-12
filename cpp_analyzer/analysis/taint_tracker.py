@@ -273,6 +273,14 @@ class TaintTracker:
         # whose LHS is a non-local identifier (no dot/arrow/bracket) and whose
         # RHS is a known function name. Keyed by callee_var only.
         self._fnptr_globals: dict[str, str] = {}
+        # P5: array-of-function-pointers. `g_cbs[i++] = f` registers f into
+        # g_cbs; subsequent `g_cbs[j](...)` calls may dispatch to any
+        # registered function. Keyed by array base name → set of targets.
+        self._fnptr_array_elements: dict[str, set[str]] = {}
+        # P5: registrar pattern. func f(T* cb) { g_arr[i] = cb; } — any call
+        # to f with a known function as arg registers that function into
+        # g_arr. Collect (registrar_func, param_index, array_base) triples.
+        registrars: list[tuple[str, int, str]] = []
         for rp, assignments in self._file_assignments.items():
             for a in assignments:
                 if not a["function"]:
@@ -287,6 +295,37 @@ class TaintTracker:
                     # plain identifier (no member / index access) → file-scope alias
                     if not any(c in lhs for c in ".->["):
                         self._fnptr_globals[lhs] = rhs
+                    else:
+                        # array-indexed direct bind: `g_cbs[0] = fn`
+                        m = re.match(r'^(\w+)\s*\[', lhs)
+                        if m:
+                            self._fnptr_array_elements.setdefault(m.group(1), set()).add(rhs)
+                # registrar detection: arr[...] = <param>
+                if a["rhs_call"]:
+                    continue
+                lhs = a["lhs"]
+                mlhs = re.match(r'^(\w+)\s*\[', lhs)
+                if mlhs and re.fullmatch(r'[A-Za-z_]\w*', rhs):
+                    # is rhs a param of a["function"]?
+                    for fp in self._file_params.get(rp, []):
+                        if fp["function_name"] != a["function"]:
+                            continue
+                        for param in fp["params"]:
+                            if param["name"] == rhs:
+                                registrars.append((a["function"], param["index"], mlhs.group(1)))
+
+        # for each registrar, scan all call sites and record fnptr arg bindings
+        for reg_func, param_idx, arr_base in registrars:
+            for rp, calls in self._file_calls.items():
+                for call in calls:
+                    if call["callee_name"] != reg_func:
+                        continue
+                    for arg in call["args"]:
+                        if arg["index"] != param_idx:
+                            continue
+                        expr = arg["expression"].strip().lstrip("&")
+                        if expr in self._func_to_file:
+                            self._fnptr_array_elements.setdefault(arr_base, set()).add(expr)
 
     def _scan_sinks(self) -> list[dict]:
         """Find all assignments whose LHS matches a sink pattern."""
@@ -409,6 +448,21 @@ class TaintTracker:
                     lhs = a["lhs"]
                     if lhs != resolved_var and lhs.startswith(base + "."):
                         reaching.append(a)
+
+        # P5: when tracking a plain struct var `pk`, also include writes to
+        # its fields `pk.b = taint` — needed for bitfield / type-punning
+        # patterns where the sink reads the whole struct but taint entered
+        # via a field write. Trigger when there's no useful reaching def
+        # (empty list, or only initializer-style defs with no rhs_vars).
+        has_useful = any(a["rhs_vars"] for a in reaching)
+        if (not has_useful
+                and "." not in resolved_var
+                and "->" not in resolved_var
+                and "[" not in resolved_var):
+            for a in reversed(func_assignments):
+                lhs = a["lhs"]
+                if lhs.startswith(resolved_var + ".") or lhs.startswith(resolved_var + "->"):
+                    reaching.append(a)
 
         for assign in reaching:
             # if RHS is a function call, dive into the callee's return values
@@ -657,18 +711,20 @@ class TaintTracker:
                     # fallback: file-scope / global fnptr assigned elsewhere
                     elif self._fnptr_globals.get(call["callee_name"]) == func_name:
                         indirect = True
-                    # P3: C++ member-style calls. `w->method(...)` and
-                    # `obj.method(...)` expose the method name in the callee
-                    # text; match it against all overrides (functions with
-                    # the same bare name) so virtual dispatch resolves to
-                    # every concrete implementation. Pointer-to-member calls
-                    # like `(w->*fn)(...)` are intentionally NOT matched
-                    # here — `fn` is a runtime value and accepting them
-                    # would link every caller to every method.
                     else:
-                        m = re.search(r'(?:->|\.|::)(\w+)$', call["callee_name"])
-                        if m and m.group(1) == func_name:
+                        # P5: array-of-fnptr dispatch. `g_cbs[i](...)`
+                        # matches any function registered into `g_cbs[*]`.
+                        m = re.match(r'^(\w+)\s*\[', call["callee_name"])
+                        if m and func_name in self._fnptr_array_elements.get(m.group(1), set()):
                             indirect = True
+                        # P3: C++ member-style calls. `w->method(...)` and
+                        # `obj.method(...)` match overrides by bare method
+                        # name. Pointer-to-member `(w->*fn)(...)` is NOT
+                        # matched — fn is runtime-valued.
+                        if not indirect:
+                            mm = re.search(r'(?:->|\.|::)(\w+)$', call["callee_name"])
+                            if mm and mm.group(1) == func_name:
+                                indirect = True
                 if not (direct or indirect):
                     continue
                 for arg in call["args"]:
