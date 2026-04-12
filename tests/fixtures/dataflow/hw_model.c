@@ -209,6 +209,31 @@ void enum_range_write(ExtConfig* ecfg, HwRegs* regs) {
     regs->regs[THRESH_REG] = pwr;
 }
 
+/* ── range patterns: ternary clamp and CLAMP macro ── */
+
+#define CLAMP(x, lo, hi)  ((x) < (lo) ? (lo) : ((x) > (hi) ? (hi) : (x)))
+
+void ternary_clamp_write(Config* cfg, HwRegs* regs) {
+    int freq = cfg->frequency;
+    freq = (freq > MAX_FREQ) ? MAX_FREQ : freq;
+    freq = (freq < MIN_FREQ) ? MIN_FREQ : freq;
+    regs->regs[TIMING_REG] = freq;
+}
+
+void clamp_macro_write(Config* cfg, HwRegs* regs) {
+    int thresh = CLAMP(cfg->threshold, 0, MAX_THRESHOLD);
+    regs->regs[THRESH_REG] = thresh;
+}
+
+/* ── volatile MMIO direct write (no macro) ──────────── */
+
+#define HW_BASE 0x40001000
+
+void volatile_mmio_write(Config* cfg) {
+    *(volatile uint32_t*)(HW_BASE + 0x00) = cfg->frequency;
+    *(volatile uint32_t*)(HW_BASE + 0x04) = cfg->mode;
+}
+
 /* ── dependency: multiple config fields → same reg ── */
 
 void dependent_write(Config* cfg, HwRegs* regs) {

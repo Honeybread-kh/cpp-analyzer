@@ -896,6 +896,94 @@ def extract_range_constraints(root: Node) -> list[dict]:
             "function": func_name or "",
         })
 
+    # ternary clamp: x = (x > MAX) ? MAX : x
+    for assign in walk_type(root, "assignment_expression"):
+        lhs = assign.child_by_field_name("left")
+        rhs = assign.child_by_field_name("right")
+        if lhs is None or rhs is None:
+            continue
+        lhs_text = node_text(lhs).strip()
+
+        cond_expr = rhs
+        while cond_expr.type == "parenthesized_expression" and cond_expr.named_child_count > 0:
+            cond_expr = cond_expr.named_children[0]
+        if cond_expr.type != "conditional_expression":
+            continue
+
+        named = cond_expr.named_children
+        if len(named) < 3:
+            continue
+        condition, consequence, alternative = named[0], named[1], named[2]
+
+        inner_cond = condition
+        while inner_cond.type == "parenthesized_expression" and inner_cond.named_child_count > 0:
+            inner_cond = inner_cond.named_children[0]
+        if inner_cond.type != "binary_expression":
+            continue
+
+        cleft = inner_cond.child_by_field_name("left")
+        cright = inner_cond.child_by_field_name("right")
+        if cleft is None or cright is None:
+            continue
+        cop = ""
+        for child in inner_cond.children:
+            if not child.is_named and child.type in ("<", "<=", ">", ">="):
+                cop = child.type
+                break
+        if not cop:
+            continue
+
+        cleft_text = node_text(cleft).strip()
+        cright_text = node_text(cright).strip()
+        cons_text = node_text(consequence).strip()
+        alt_text = node_text(alternative).strip()
+
+        if cleft_text != lhs_text:
+            continue
+        if cons_text != cright_text or alt_text != lhs_text:
+            continue
+
+        constraint_type = "max" if cop in (">", ">=") else "min"
+        func_name = _find_enclosing_function(assign)
+        results.append({
+            "variable": lhs_text,
+            "constraint_type": constraint_type,
+            "bound_value": cright_text,
+            "line": assign.start_point[0] + 1,
+            "function": func_name or "",
+        })
+
+    # CLAMP-like macro call: x = CLAMP(var, min, max)
+    for call in walk_type(root, "call_expression"):
+        fn = call.child_by_field_name("function")
+        args = call.child_by_field_name("arguments")
+        if fn is None or args is None:
+            continue
+        fn_name = node_text(fn).strip()
+        if fn_name not in ("CLAMP", "clamp", "CLIP", "clip", "SATURATE", "saturate"):
+            continue
+        arg_list = [c for c in args.named_children]
+        if len(arg_list) != 3:
+            continue
+        var_text = node_text(arg_list[0]).strip()
+        min_text = node_text(arg_list[1]).strip()
+        max_text = node_text(arg_list[2]).strip()
+        func_name = _find_enclosing_function(call)
+        results.append({
+            "variable": var_text,
+            "constraint_type": "min",
+            "bound_value": min_text,
+            "line": call.start_point[0] + 1,
+            "function": func_name or "",
+        })
+        results.append({
+            "variable": var_text,
+            "constraint_type": "max",
+            "bound_value": max_text,
+            "line": call.start_point[0] + 1,
+            "function": func_name or "",
+        })
+
     return results
 
 

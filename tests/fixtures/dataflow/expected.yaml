@@ -277,6 +277,44 @@ paths:
     min_depth: 2
     difficulty: easy
 
+  # ══════════════════════════════════════════════════════
+  # Extended range & volatile MMIO (Gap C4 + A3)
+  # ══════════════════════════════════════════════════════
+
+  # 패턴: freq = (freq > MAX_FREQ) ? MAX_FREQ : freq
+  # 설명: 삼항 연산자를 통한 clamp
+  - name: "ternary clamp frequency"
+    source: "cfg->frequency"
+    sink: "regs->regs[TIMING_REG]"
+    requires: ternary_range
+    min_depth: 2
+    difficulty: medium
+
+  # 패턴: thresh = CLAMP(cfg->threshold, 0, MAX_THRESHOLD)
+  # 설명: CLAMP 매크로 호출을 통한 범위 제한
+  - name: "CLAMP macro threshold"
+    source: "cfg->threshold"
+    sink: "regs->regs[THRESH_REG]"
+    requires: clamp_macro
+    min_depth: 2
+    difficulty: medium
+
+  # 패턴: *(volatile uint32_t*)(HW_BASE + 0x00) = cfg->frequency
+  # 설명: 매크로 없이 직접 volatile 포인터 cast로 MMIO 쓰기
+  - name: "volatile MMIO direct write"
+    source: "cfg->frequency"
+    sink_pattern: "volatile.*uint32_t"
+    requires: volatile_mmio
+    min_depth: 2
+    difficulty: medium
+
+  - name: "volatile MMIO mode write"
+    source: "cfg->mode"
+    sink_pattern: "volatile.*uint32_t"
+    requires: volatile_mmio
+    min_depth: 2
+    difficulty: medium
+
 # Scoring: each found path = 1 point
 # Difficulty multiplier: easy=1, medium=2, hard=3
 # Total possible score: sum of all (1 * multiplier)
