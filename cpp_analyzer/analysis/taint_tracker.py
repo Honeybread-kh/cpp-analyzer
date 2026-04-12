@@ -593,11 +593,16 @@ class TaintTracker:
                     results.append((a["function"], file_path, a))
         return results
 
-    def generate_config_specs(self) -> list[ConfigFieldSpec]:
-        """Generate config field specifications with enum/range metadata.
+    def generate_config_specs(self, paths: list[DataFlowPath] | None = None) -> list[ConfigFieldSpec]:
+        """Generate config field specifications with enum/range metadata and descriptions.
 
-        Combines struct field definitions, enum definitions, and range
-        constraints to produce enriched ConfigFieldSpec entries.
+        Combines struct field definitions, enum definitions, range constraints,
+        and dataflow paths to produce enriched ConfigFieldSpec entries with
+        auto-generated descriptions.
+
+        Args:
+            paths: Dataflow paths from trace(). If provided, used to populate
+                   register_sinks, transforms, and description fields.
 
         Must be called after trace() or _load_all_files() so caches are populated.
         """
@@ -615,6 +620,14 @@ class TaintTracker:
         for file_path, ranges in self._file_ranges.items():
             for r in ranges:
                 all_ranges.append(r)
+
+        # index dataflow paths by source field name
+        # e.g. "cfg->frequency" -> [path1, path2, ...]
+        source_to_paths: dict[str, list[DataFlowPath]] = {}
+        if paths:
+            for p in paths:
+                src = p.source.variable
+                source_to_paths.setdefault(src, []).append(p)
 
         # collect struct fields
         specs: list[ConfigFieldSpec] = []
@@ -654,17 +667,94 @@ class TaintTracker:
                 # variable name ends with this field name
                 for rc in all_ranges:
                     rc_var = rc["variable"]
-                    # match if variable name is the field name or ends with
-                    # a suffix that matches (e.g. "pwr" for "power_level")
                     if rc_var == field_name:
                         if rc["constraint_type"] == "min":
                             spec.min_value = rc["bound_value"]
                         elif rc["constraint_type"] == "max":
                             spec.max_value = rc["bound_value"]
 
+                # match dataflow paths to populate sinks/transforms/description
+                self._enrich_spec_from_paths(spec, struct_name, field_name, source_to_paths)
+
                 specs.append(spec)
 
         return specs
+
+    def _enrich_spec_from_paths(
+        self,
+        spec: ConfigFieldSpec,
+        struct_name: str,
+        field_name: str,
+        source_to_paths: dict[str, list[DataFlowPath]],
+    ) -> None:
+        """Populate register_sinks, transforms, and description from dataflow paths."""
+        if not source_to_paths:
+            return
+
+        # find matching paths: try "struct->field" patterns
+        matching_paths: list[DataFlowPath] = []
+        for src_var, path_list in source_to_paths.items():
+            # extract field part from source like "cfg->frequency"
+            parts = src_var.replace(".", "->").split("->")
+            if len(parts) >= 2 and parts[-1] == field_name:
+                matching_paths.extend(path_list)
+
+        if not matching_paths:
+            return
+
+        # collect unique sinks and transforms
+        sinks: list[str] = []
+        transforms: list[str] = []
+        for p in matching_paths:
+            sink_var = p.sink.variable
+            if sink_var not in sinks:
+                sinks.append(sink_var)
+            # collect transforms from all steps
+            all_nodes = [p.source] + p.steps + [p.sink]
+            for node in all_nodes:
+                if node.transform and node.transform not in transforms:
+                    transforms.append(node.transform)
+
+        spec.register_sinks = sinks
+        spec.transforms = transforms
+
+        # build description
+        desc_parts = []
+
+        # type info
+        if spec.enum_type:
+            desc_parts.append(f"enum {spec.enum_type} ({', '.join(spec.enum_values)})")
+        elif spec.field_type:
+            desc_parts.append(spec.field_type)
+
+        # range info
+        range_parts = []
+        if spec.min_value is not None:
+            range_parts.append(f"min={spec.min_value}")
+        if spec.max_value is not None:
+            range_parts.append(f"max={spec.max_value}")
+        if range_parts:
+            desc_parts.append(f"range [{', '.join(range_parts)}]")
+
+        # sink mapping info
+        if sinks:
+            sink_str = ", ".join(sinks)
+            if transforms:
+                transform_str = " ".join(transforms)
+                desc_parts.append(f"-> {sink_str} (transform: {transform_str})")
+            else:
+                desc_parts.append(f"-> {sink_str}")
+
+        # via functions
+        via_funcs = set()
+        for p in matching_paths:
+            for node in p.steps:
+                if node.function:
+                    via_funcs.add(node.function)
+        if via_funcs:
+            desc_parts.append(f"via {', '.join(sorted(via_funcs))}")
+
+        spec.description = "; ".join(desc_parts)
 
     def save_results(self, paths: list[DataFlowPath]) -> int:
         """Save analysis results to the database."""

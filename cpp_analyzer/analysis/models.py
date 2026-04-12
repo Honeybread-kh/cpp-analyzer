@@ -139,6 +139,9 @@ class ConfigFieldSpec:
     enum_values: list[str] = field(default_factory=list)
     min_value: str | None = None
     max_value: str | None = None
+    register_sinks: list[str] = field(default_factory=list)
+    transforms: list[str] = field(default_factory=list)
+    description: str = ""
     file: str = ""
     line: int = 0
 

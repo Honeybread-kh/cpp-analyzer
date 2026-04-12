@@ -310,8 +310,8 @@ class TestConfigSpecGeneration:
 
     @pytest.fixture(scope="class")
     def config_specs(self, analysis_db):
-        """Generate config specs using TaintTracker."""
-        repo, pid, _ = analysis_db
+        """Generate config specs using TaintTracker with dataflow paths."""
+        repo, pid, paths = analysis_db
 
         source_patterns = [
             {"name": "config_field", "regex": r"cfg->(\w+)"},
@@ -325,7 +325,7 @@ class TestConfigSpecGeneration:
 
         tracker = TaintTracker(repo, pid, source_patterns, sink_patterns)
         tracker._load_all_files()
-        return tracker.generate_config_specs()
+        return tracker.generate_config_specs(paths=paths)
 
     def test_op_mode_enum_values(self, config_specs):
         """ExtConfig.op_mode should have OpMode enum values."""
@@ -351,6 +351,31 @@ class TestConfigSpecGeneration:
         # Range constraints use variable name "pwr" not "power_level",
         # so direct matching by field name won't work without alias resolution.
         # This tests the current capability.
+
+    def test_description_has_sink_info(self, config_specs):
+        """Config fields with dataflow paths should have description with sink info."""
+        spec = None
+        for s in config_specs:
+            if s.struct_name == "Config" and s.field_name == "frequency":
+                spec = s
+                break
+        assert spec is not None, "Config.frequency not found in specs"
+        assert spec.description, "description should not be empty"
+        assert spec.register_sinks, "register_sinks should not be empty"
+        # frequency maps to at least one register
+        assert any("regs" in sink.lower() or "REG" in sink for sink in spec.register_sinks)
+
+    def test_enum_description_includes_values(self, config_specs):
+        """Enum-typed fields should mention enum values in description."""
+        spec = None
+        for s in config_specs:
+            if s.struct_name == "ExtConfig" and s.field_name == "op_mode":
+                spec = s
+                break
+        assert spec is not None, "ExtConfig.op_mode not found in specs"
+        assert spec.description, "description should not be empty"
+        assert "OpMode" in spec.description
+        assert "MODE_LOW" in spec.description
 
 
 # ── benchmark scoring ─────────────────────────────────────────────────────────
