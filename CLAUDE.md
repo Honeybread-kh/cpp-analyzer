@@ -27,23 +27,60 @@ CLI (click) + MCP Server (FastMCP) 이중 인터페이스.
 - 모든 에이전트는 `model: "opus"` 사용
 - 중간 산출물: `_workspace/` 디렉토리
 
+## 하네스: cpp-analyzer 진화 (evolution)
+
+**목표:** 벤치마크(tests/test_dataflow.py) 점수를 기준으로 gap을 감지하고, 원인을 추론하여 개선을 제안·구현하는 자가 개선 파이프라인
+
+**에이전트 팀:**
+| 에이전트 | 역할 |
+|---------|------|
+| benchmarker | 벤치마크 실행, 카테고리별 집계, regression 감지 (general-purpose) |
+| reasoner | gap 분석, 코드 수준(파일:함수) 원인 추론, 제안서 작성 (general-purpose) |
+| developer (재사용) | 제안서에 따른 실제 구현 — 기존 개발 하네스의 developer 재사용 |
+
+**스킬:**
+| 스킬 | 용도 | 사용 에이전트 |
+|------|------|-------------|
+| cpp-analyzer-bench | 벤치마크 실행 파이프라인 + regression 감지 룰 | benchmarker |
+| cpp-analyzer-reason | gap 카테고리별 추론 방법론 + 제안서 템플릿 | reasoner |
+| cpp-analyzer-evolution | 전체 파이프라인 조율 (bench → reason → implement → re-bench) | 오케스트레이터 |
+
+**실행 규칙:**
+- 벤치마크 실행, gap 분석, 자동 진화, regression 체크 요청 시 `cpp-analyzer-evolution` 스킬을 사용하라
+- 자동 구현(Phase 3)은 regression 없을 때만 실행, 한 번에 gap 1건
+- PR 자동 머지 금지, 사람 리뷰 필수
+- 모든 에이전트는 `model: "opus"` 사용
+- 중간 산출물: `_workspace_evo/` 디렉토리 (개발 하네스의 `_workspace/`와 분리)
+- implementer 단계는 기존 `cpp-analyzer-orchestrator` 스킬을 재귀 호출하여 수행
+
 **디렉토리 구조:**
 ```
 .claude/
 ├── agents/
-│   ├── analyst.md
-│   ├── developer.md
-│   └── qa.md
-└── skills/
-    ├── cpp-analyzer-dev/
-    │   └── SKILL.md
-    ├── cpp-analyzer-qa/
-    │   └── SKILL.md
-    └── cpp-analyzer-orchestrator/
-        └── SKILL.md
+│   ├── analyst.md         # 개발 하네스
+│   ├── developer.md       # 개발 하네스 (evolution에서도 재사용)
+│   ├── qa.md              # 개발 하네스
+│   ├── benchmarker.md     # evolution 하네스
+│   └── reasoner.md        # evolution 하네스
+├── skills/
+│   ├── cpp-analyzer-dev/           # 개발
+│   │   └── SKILL.md
+│   ├── cpp-analyzer-qa/            # 개발
+│   │   └── SKILL.md
+│   ├── cpp-analyzer-orchestrator/  # 개발 (오케스트레이터)
+│   │   └── SKILL.md
+│   ├── cpp-analyzer-bench/         # evolution
+│   │   └── SKILL.md
+│   ├── cpp-analyzer-reason/        # evolution
+│   │   └── SKILL.md
+│   └── cpp-analyzer-evolution/     # evolution (오케스트레이터)
+│       └── SKILL.md
+└── triggers/
+    └── evolve-analyzer.md          # 주간 자동 실행 트리거
 ```
 
 **변경 이력:**
 | 날짜 | 변경 내용 | 대상 | 사유 |
 |------|----------|------|------|
-| 2026-04-06 | 초기 구성 | 전체 | 하네스 신규 구축 |
+| 2026-04-06 | 초기 구성 | 개발 하네스 전체 | 하네스 신규 구축 |
+| 2026-04-11 | evolution 하네스 추가 | benchmarker, reasoner, cpp-analyzer-{bench,reason,evolution} | 벤치마크 기반 자가 개선 파이프라인 구축 (기존 개발 하네스와 분리) |
