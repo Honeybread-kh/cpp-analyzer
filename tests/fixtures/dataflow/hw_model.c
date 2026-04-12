@@ -352,6 +352,15 @@ void ptr_arith_offset_write(Config* cfg) {
     *(p + 2) = cfg->threshold;
 }
 
+/* ── user-defined macro expansion sink (Gap C1) ─── */
+
+#define SET_FIELD_REG(r, idx, v) (r)->regs[(idx)] = (v)
+
+void macro_expand_write(Config* cfg, HwRegs* regs) {
+    SET_FIELD_REG(regs, TIMING_REG, cfg->frequency);
+    SET_FIELD_REG(regs, MODE_REG, cfg->mode);
+}
+
 /* ── dependency: multiple config fields → same reg ── */
 
 void dependent_write(Config* cfg, HwRegs* regs) {

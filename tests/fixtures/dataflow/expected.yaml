@@ -373,6 +373,30 @@ paths:
     difficulty: hard
 
   # ══════════════════════════════════════════════════════
+  # User-defined macro expansion sink (Gap C1)
+  # ══════════════════════════════════════════════════════
+
+  # 패턴: #define SET_FIELD_REG(r, idx, v) (r)->regs[(idx)] = (v)
+  #        SET_FIELD_REG(regs, TIMING_REG, cfg->frequency)
+  # 설명: 사용자 정의 매크로의 body에서 sink 패턴(regs->regs[...] = ...)을
+  #       감지하고, 호출부 인자(cfg->frequency)를 추적해야 함.
+  - name: "macro expansion write freq"
+    source: "cfg->frequency"
+    sink_pattern: "SET_FIELD_REG"
+    expected_function: "macro_expand_write"
+    requires: macro_expansion
+    min_depth: 2
+    difficulty: hard
+
+  - name: "macro expansion write mode"
+    source: "cfg->mode"
+    sink_pattern: "SET_FIELD_REG"
+    expected_function: "macro_expand_write"
+    requires: macro_expansion
+    min_depth: 2
+    difficulty: hard
+
+  # ══════════════════════════════════════════════════════
   # Pointer arithmetic (Gap C3)
   # ══════════════════════════════════════════════════════
 

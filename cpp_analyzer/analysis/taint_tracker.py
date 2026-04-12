@@ -231,6 +231,16 @@ class TaintTracker:
             union_types = ts_parser.extract_union_types(root)
             union_instances = ts_parser.extract_union_instances(root, union_types) if union_types else []
 
+            # auto-register user-defined macros whose body contains a
+            # sink-like assignment (e.g. (r)->regs[idx] = (v)). Each such
+            # macro's name is appended to _compiled_sinks so macro calls
+            # matching the registered sink patterns become synthetic sinks.
+            for m in ts_parser.extract_macros_with_assignments(root):
+                macro_name = m["macro_name"]
+                macro_pat = re.compile(r"\b" + re.escape(macro_name) + r"\s*\(")
+                if not any(p.pattern == macro_pat.pattern for p in self._compiled_sinks):
+                    self._compiled_sinks.append(macro_pat)
+
             self._file_assignments[rp] = assignments
             self._file_calls[rp] = calls
             self._file_params[rp] = params

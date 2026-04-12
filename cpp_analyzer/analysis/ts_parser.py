@@ -485,8 +485,9 @@ def extract_macros_with_assignments(root: Node) -> list[dict]:
             continue
         macro_name = node_text(name_node)
         body = node_text(node)
-        # check if body has -> assignment pattern
-        if re.search(r'\w+->\w+\s*=', body):
+        # check if body has -> assignment or register-array write pattern.
+        # Accepts (r)->regs[...] = ..., r->field = ..., *(...) = ..., etc.
+        if re.search(r'->\s*\w+\s*[\[=]', body) or re.search(r'\*\s*\(', body):
             params_node = node.child_by_field_name("parameters")
             params = node_text(params_node) if params_node else ""
             results.append({
