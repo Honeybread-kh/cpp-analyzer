@@ -594,6 +594,16 @@ class TaintTracker:
         for a in assignments:
             lhs = a["lhs"]
             rhs = a["rhs"]
+            # B2: container_of(ptr, type, member) — recover outer struct
+            # from an embedded member pointer. Treat as structural alias
+            # so w->member.field resolves to the inner ptr's field.
+            if a.get("rhs_call") == "container_of":
+                m = re.match(r'container_of\s*\(\s*([A-Za-z_]\w*)', rhs)
+                clean_lhs = lhs.lstrip("*& ").strip()
+                if (m and "->" not in clean_lhs and "." not in clean_lhs
+                        and re.fullmatch(r'[A-Za-z_]\w*', clean_lhs)):
+                    alias_map.add(clean_lhs, m.group(1))
+                continue
             # detect pointer/address assignments: p = q, p = &obj
             # skip function call results — those are not pointer aliases
             if a.get("rhs_call"):

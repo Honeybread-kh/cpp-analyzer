@@ -449,6 +449,29 @@ class TestMultiCallback:
         pytest.fail("Flexible-array-member sink path not traced")
 
 
+class TestContainerOf:
+    """B2: container_of recovers outer struct; member access must trace
+    back to the inner pointer that was passed in."""
+
+    def test_container_of_frequency(self, analysis_db):
+        _, _, paths = analysis_db
+        for p in paths:
+            if ("icfg->" in p.source.variable
+                    and "CO_TIMING_REG" in p.sink.variable
+                    and p.sink.function == "co_recover_write"):
+                return
+        pytest.fail("container_of frequency path not traced")
+
+    def test_container_of_mode(self, analysis_db):
+        _, _, paths = analysis_db
+        for p in paths:
+            if ("icfg->" in p.source.variable
+                    and "CO_MODE_REG" in p.sink.variable
+                    and p.sink.function == "co_recover_write"):
+                return
+        pytest.fail("container_of mode path not traced")
+
+
 class TestGotoUnwind:
     """B3: goto-based error unwind — sink behind label, reaching-def
     analysis must keep the real assignment (not just the initializer)."""

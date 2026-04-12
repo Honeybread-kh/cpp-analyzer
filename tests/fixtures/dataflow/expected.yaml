@@ -623,6 +623,26 @@ paths:
     difficulty: hard
 
   # ══════════════════════════════════════════════════════
+  # B2: container_of / offsetof structural alias
+  # ══════════════════════════════════════════════════════
+
+  - name: "container_of frequency"
+    source: "icfg->"
+    sink: "CO_TIMING_REG"
+    expected_function: "co_recover_write"
+    requires: container_of_alias
+    min_depth: 2
+    difficulty: hard
+
+  - name: "container_of mode"
+    source: "icfg->"
+    sink: "CO_MODE_REG"
+    expected_function: "co_recover_write"
+    requires: container_of_alias
+    min_depth: 2
+    difficulty: hard
+
+  # ══════════════════════════════════════════════════════
   # B3: goto-based error unwind reaching-def
   # ══════════════════════════════════════════════════════
 
