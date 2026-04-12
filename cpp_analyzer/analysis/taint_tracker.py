@@ -123,6 +123,7 @@ class TaintTracker:
         self._file_assignments: dict[str, list[dict]] = {}  # path -> assignments
         self._file_calls: dict[str, list[dict]] = {}        # path -> call args
         self._file_params: dict[str, list[dict]] = {}       # path -> function params
+        self._file_returns: dict[str, list[dict]] = {}      # path -> return stmts
         self._func_to_file: dict[str, str] = {}             # func_name -> file path
 
     def trace(self, max_depth: int = 5, max_paths: int = 100) -> list[DataFlowPath]:
@@ -194,10 +195,12 @@ class TaintTracker:
             assignments = ts_parser.extract_all_assignments(root)
             calls = ts_parser.extract_call_arguments(root)
             params = ts_parser.extract_function_params(root)
+            returns = ts_parser.extract_function_returns(root)
 
             self._file_assignments[rp] = assignments
             self._file_calls[rp] = calls
             self._file_params[rp] = params
+            self._file_returns[rp] = returns
 
             for a in assignments:
                 if a["function"]:
@@ -312,6 +315,29 @@ class TaintTracker:
         reaching = self._find_reaching_defs(resolved_var, func_assignments)
 
         for assign in reaching:
+            # if RHS is a function call, dive into the callee's return values
+            callee = assign.get("rhs_call")
+            if callee and callee in self._func_to_file:
+                callee_file = self._func_to_file[callee]
+                for ret in self._file_returns.get(callee_file, []):
+                    if ret["function"] != callee:
+                        continue
+                    for ret_var in ret["return_vars"]:
+                        chain = self._trace_backward(
+                            ret_var, callee, callee_file,
+                            depth - 1, visited,
+                        )
+                        if chain:
+                            chain.append(TaintNode(
+                                variable=resolved_var,
+                                node_type="INTERMEDIATE",
+                                transform=f"={callee}(...)",
+                                file=callee_file,
+                                line=ret["line"],
+                                function=callee,
+                            ))
+                            return chain
+
             # for each RHS variable, recurse
             for rhs_var in assign["rhs_vars"]:
                 resolved_rhs = alias_map.resolve_field(rhs_var)
@@ -357,6 +383,9 @@ class TaintTracker:
             lhs = a["lhs"]
             rhs = a["rhs"]
             # detect pointer/address assignments: p = q, p = &obj
+            # skip function call results — those are not pointer aliases
+            if a.get("rhs_call"):
+                continue
             if a["operator"] == "=" and "->" not in lhs and "." not in lhs:
                 # simple variable assignment (likely pointer alias)
                 if "->" not in rhs and "." not in rhs:

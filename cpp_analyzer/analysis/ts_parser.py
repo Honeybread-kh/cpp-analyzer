@@ -487,6 +487,37 @@ def extract_macros_with_assignments(root: Node) -> list[dict]:
 
 # ── dataflow: all assignments + call arguments ────────────────────────────
 
+def _extract_rhs_call(value: Node) -> str | None:
+    """If the RHS expression is (or wraps) a call_expression, return the
+    outermost callee identifier.  Returns None for non-call RHS or when the
+    callee is not a simple name (e.g. function pointer through a field).
+    """
+    node = value
+    # unwrap parenthesized/cast expressions, prefix ops
+    while node is not None and node.type in (
+        "parenthesized_expression", "cast_expression", "unary_expression",
+    ):
+        inner = node.child_by_field_name("value") or node.child_by_field_name("argument")
+        if inner is None:
+            # parenthesized_expression stores child at index 1 typically
+            named = [c for c in node.named_children]
+            if len(named) == 1:
+                inner = named[0]
+        if inner is None or inner is node:
+            break
+        node = inner
+
+    if node is None or node.type != "call_expression":
+        return None
+
+    callee = node.child_by_field_name("function")
+    if callee is None:
+        return None
+    if callee.type == "identifier":
+        return node_text(callee).strip()
+    return None
+
+
 def extract_all_assignments(root: Node) -> list[dict]:
     """Extract all assignments within function bodies for dataflow analysis.
 
@@ -494,7 +525,7 @@ def extract_all_assignments(root: Node) -> list[dict]:
     including compound assignments (+=, |=, <<=, etc.).
 
     Returns list of dicts sorted by line:
-        lhs, rhs, rhs_vars (list), operator, transform, line, function
+        lhs, rhs, rhs_vars (list), operator, transform, line, function, rhs_call
     """
     import re
     results = []
@@ -536,6 +567,7 @@ def extract_all_assignments(root: Node) -> list[dict]:
                 "lhs": lhs,
                 "rhs": rhs,
                 "rhs_vars": rhs_vars,
+                "rhs_call": _extract_rhs_call(right),
                 "operator": operator,
                 "transform": transform,
                 "line": assign.start_point[0] + 1,
@@ -557,6 +589,7 @@ def extract_all_assignments(root: Node) -> list[dict]:
                 "lhs": lhs,
                 "rhs": rhs,
                 "rhs_vars": rhs_vars,
+                "rhs_call": _extract_rhs_call(value),
                 "operator": "=",
                 "transform": "",
                 "line": init_decl.start_point[0] + 1,
@@ -564,6 +597,36 @@ def extract_all_assignments(root: Node) -> list[dict]:
             })
 
     results.sort(key=lambda x: (x["function"], x["line"]))
+    return results
+
+
+def extract_function_returns(root: Node) -> list[dict]:
+    """Extract return statements from each function definition.
+
+    Returns list of dicts:
+        function, return_expr (str), return_vars (list[str]), line
+    """
+    results = []
+    for func in walk_type(root, "function_definition"):
+        decl = func.child_by_field_name("declarator")
+        body = func.child_by_field_name("body")
+        if decl is None or body is None:
+            continue
+        func_name = _get_function_name(decl) or ""
+
+        for ret in walk_type(body, "return_statement"):
+            expr = None
+            for child in ret.named_children:
+                expr = child
+                break
+            if expr is None:
+                continue
+            results.append({
+                "function": func_name,
+                "return_expr": node_text(expr).strip(),
+                "return_vars": _extract_variables(expr),
+                "line": ret.start_point[0] + 1,
+            })
     return results
 
 
