@@ -349,6 +349,36 @@ class TestDeepChain:
         pytest.fail("Mutual recursion taint path not found")
 
 
+class TestCppDispatch:
+    """P3: C++ virtual dispatch + member function pointer."""
+
+    def test_virtual_dispatch_timing(self, analysis_db):
+        """vcall_write → Writer::write (virtual) → TimingWriter::write → CPP_TIMING_REG"""
+        _, _, paths = analysis_db
+        for p in paths:
+            if "ccfg->frequency" in p.source.variable and "CPP_TIMING_REG" in p.sink.variable:
+                return
+        pytest.fail("Virtual dispatch to TimingWriter::write not traced")
+
+    def test_virtual_dispatch_mode(self, analysis_db):
+        """Same call site also resolves to ModeWriter::write → CPP_MODE_REG"""
+        _, _, paths = analysis_db
+        for p in paths:
+            if "ccfg->frequency" in p.source.variable and "CPP_MODE_REG" in p.sink.variable:
+                return
+        pytest.fail("Virtual dispatch to ModeWriter::write not traced")
+
+    def test_member_fn_ptr(self, analysis_db):
+        """(w->*fn)(...) — intentionally conservative; track as xfail."""
+        _, _, paths = analysis_db
+        for p in paths:
+            if "ccfg->mode" in p.source.variable and "CPP_" in p.sink.variable:
+                funcs = {p.sink.function} | {s.function for s in p.steps}
+                if "memfn_write" in funcs:
+                    return
+        pytest.xfail("Pointer-to-member calls not resolved (requires runtime fn tracking)")
+
+
 class TestAliasingAdvanced:
     """P2: conditional alias, linked-list walk, dynamic-index sinks."""
 

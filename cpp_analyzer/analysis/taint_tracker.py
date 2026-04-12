@@ -657,6 +657,18 @@ class TaintTracker:
                     # fallback: file-scope / global fnptr assigned elsewhere
                     elif self._fnptr_globals.get(call["callee_name"]) == func_name:
                         indirect = True
+                    # P3: C++ member-style calls. `w->method(...)` and
+                    # `obj.method(...)` expose the method name in the callee
+                    # text; match it against all overrides (functions with
+                    # the same bare name) so virtual dispatch resolves to
+                    # every concrete implementation. Pointer-to-member calls
+                    # like `(w->*fn)(...)` are intentionally NOT matched
+                    # here — `fn` is a runtime value and accepting them
+                    # would link every caller to every method.
+                    else:
+                        m = re.search(r'(?:->|\.|::)(\w+)$', call["callee_name"])
+                        if m and m.group(1) == func_name:
+                            indirect = True
                 if not (direct or indirect):
                     continue
                 for arg in call["args"]:
