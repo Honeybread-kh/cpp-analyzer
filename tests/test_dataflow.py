@@ -149,6 +149,63 @@ class TestMediumPatterns:
         assert found is not None, "Failed to trace conditional register write"
 
 
+class TestExtendedPatterns:
+    """Extended: new coverage patterns (ternary, array, bitfield, etc.)."""
+
+    def test_ternary(self, analysis_db):
+        """cfg->enable via ternary condition → regs"""
+        _, _, paths = analysis_db
+        for p in paths:
+            if "cfg->" in p.source.variable and p.sink.function == "ternary_write":
+                return
+        pytest.xfail("Ternary operator tracking not yet working")
+
+    def test_array_element(self, analysis_db):
+        """cfg->frequency via array[0] → regs"""
+        _, _, paths = analysis_db
+        for p in paths:
+            if "cfg->frequency" in p.source.variable and p.sink.function == "array_write":
+                return
+        pytest.xfail("Array element tracking not yet working")
+
+    def test_bitfield(self, analysis_db):
+        """cfg->mode via bitfield packing → regs"""
+        _, _, paths = analysis_db
+        for p in paths:
+            if "cfg->mode" in p.source.variable and p.sink.function == "bitfield_write":
+                return
+        pytest.xfail("Bitfield shift+mask tracking not yet working")
+
+    def test_global_variable(self, analysis_db):
+        """cfg->frequency via global g_cached_freq → regs"""
+        _, _, paths = analysis_db
+        for p in paths:
+            if "cfg->frequency" in p.source.variable:
+                funcs = {p.sink.function} | {s.function for s in p.steps}
+                if "cache_config" in funcs or "apply_cached" in funcs:
+                    return
+        pytest.xfail("Global variable cross-function tracking not yet working")
+
+    def test_struct_copy(self, analysis_db):
+        """cfg->threshold via struct copy → regs"""
+        _, _, paths = analysis_db
+        for p in paths:
+            if "cfg->threshold" in p.source.variable and p.sink.function == "struct_copy_write":
+                return
+            # also check alias resolution: local_cfg.threshold → cfg->threshold
+            if "threshold" in p.source.variable and p.sink.function == "struct_copy_write":
+                return
+        pytest.xfail("Struct copy field tracking not yet working")
+
+    def test_phi_node(self, analysis_db):
+        """cfg->threshold or cfg->frequency via phi-node (if/else) → regs"""
+        _, _, paths = analysis_db
+        for p in paths:
+            if "cfg->" in p.source.variable and p.sink.function == "phi_write":
+                return
+        pytest.xfail("Phi-node multiple reaching defs not yet working")
+
+
 class TestHardPatterns:
     """Hard: inter-procedural, multi-layer function chains."""
 

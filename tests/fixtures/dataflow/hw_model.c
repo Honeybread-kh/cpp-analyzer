@@ -109,3 +109,58 @@ void compound_write(Config* cfg, HwRegs* regs) {
     val |= (cfg->threshold << 8);
     regs->regs[CTRL_REG] = val;
 }
+
+/* ── ternary operator ────────────────────────────── */
+
+void ternary_write(Config* cfg, HwRegs* regs) {
+    uint32_t val = cfg->enable ? cfg->frequency : 0;
+    regs->regs[TIMING_REG] = val;
+}
+
+/* ── array element (constant index) ──────────────── */
+
+void array_write(Config* cfg, HwRegs* regs) {
+    uint32_t params[4];
+    params[0] = cfg->frequency;
+    params[1] = cfg->mode;
+    regs->regs[TIMING_REG] = params[0];
+    regs->regs[MODE_REG] = params[1];
+}
+
+/* ── bitfield shift+mask packing ─────────────────── */
+
+void bitfield_write(Config* cfg, HwRegs* regs) {
+    uint32_t reg_val = (cfg->mode & 0xFF) | ((cfg->frequency & 0xFFF) << 8) | ((cfg->enable & 0x1) << 20);
+    regs->regs[CTRL_REG] = reg_val;
+}
+
+/* ── global variable relay ───────────────────────── */
+
+static int g_cached_freq;
+
+void cache_config(Config* cfg) {
+    g_cached_freq = cfg->frequency;
+}
+
+void apply_cached(HwRegs* regs) {
+    regs->regs[TIMING_REG] = g_cached_freq;
+}
+
+/* ── struct copy (value semantics) ───────────────── */
+
+void struct_copy_write(Config* cfg, HwRegs* regs) {
+    Config local_cfg = *cfg;
+    regs->regs[THRESH_REG] = local_cfg.threshold;
+}
+
+/* ── phi-node: multiple reaching defs ────────────── */
+
+void phi_write(Config* cfg, HwRegs* regs) {
+    uint32_t val;
+    if (cfg->enable) {
+        val = cfg->frequency;
+    } else {
+        val = cfg->threshold;
+    }
+    regs->regs[TIMING_REG] = val;
+}

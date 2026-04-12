@@ -729,14 +729,31 @@ def _extract_variables(node: Node) -> list[str]:
         vars_found.append(node_text(node).strip())
         return vars_found
 
+    # handle root node itself being a plain identifier
+    if node.type == "identifier":
+        vars_found.append(node_text(node).strip())
+        return vars_found
+
+    # handle root node itself being a subscript expression (e.g. params[0])
+    if node.type == "subscript_expression":
+        vars_found.append(node_text(node).strip())
+        return vars_found
+
     # field expressions: ptr->field, obj.field
     for fe in walk_type(node, "field_expression"):
         vars_found.append(node_text(fe).strip())
 
-    # plain identifiers (but not those already part of field_expressions)
+    # subscript expressions: arr[0], params[IDX]
+    for se in walk_type(node, "subscript_expression"):
+        vars_found.append(node_text(se).strip())
+
+    # plain identifiers (but not those already part of field/subscript exprs)
     field_expr_ranges = set()
     for fe in walk_type(node, "field_expression"):
         for i in range(fe.start_byte, fe.end_byte):
+            field_expr_ranges.add(i)
+    for se in walk_type(node, "subscript_expression"):
+        for i in range(se.start_byte, se.end_byte):
             field_expr_ranges.add(i)
 
     for ident in walk_type(node, "identifier"):

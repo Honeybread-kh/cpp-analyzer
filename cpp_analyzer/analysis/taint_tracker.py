@@ -284,8 +284,12 @@ class TaintTracker:
 
         # check if var matches a source pattern
         if self._match_source(var):
+            # normalize separator: cfg.field → cfg->field for consistency
+            source_var = var
+            if "." in var and "->" not in var:
+                source_var = var.replace(".", "->", 1)
             return [TaintNode(
-                variable=var,
+                variable=source_var,
                 node_type="SOURCE",
                 file=file_path,
                 line=0,
@@ -304,8 +308,11 @@ class TaintTracker:
         # resolve the variable through aliases
         resolved_var = alias_map.resolve_field(var)
         if resolved_var != var and self._match_source(resolved_var):
+            source_var = resolved_var
+            if "." in resolved_var and "->" not in resolved_var:
+                source_var = resolved_var.replace(".", "->", 1)
             return [TaintNode(
-                variable=resolved_var,
+                variable=source_var,
                 node_type="SOURCE",
                 file=file_path,
                 function=func_name,
@@ -398,6 +405,31 @@ class TaintTracker:
                             ))
                             return chain
 
+        # fallback: cross-function plain variable (e.g. global variable)
+        # if var has no reaching def and is not a parameter, search other
+        # functions for assignments to the same variable name
+        if not reaching and not self._is_param(var, func_name, file_path):
+            if "->" not in var and "." not in var:
+                writers = self._find_cross_func_var_writers(
+                    var, func_name, file_path,
+                )
+                for writer_func, writer_file, writer_assign in writers:
+                    for rhs_var in writer_assign["rhs_vars"]:
+                        chain = self._trace_backward(
+                            rhs_var, writer_func, writer_file,
+                            depth - 1, visited,
+                        )
+                        if chain:
+                            chain.append(TaintNode(
+                                variable=var,
+                                node_type="INTERMEDIATE",
+                                transform="global",
+                                file=writer_file,
+                                line=writer_assign["line"],
+                                function=writer_func,
+                            ))
+                            return chain
+
         return None
 
     def _build_alias_map(self, assignments: list[dict]) -> AliasMap:
@@ -420,25 +452,36 @@ class TaintTracker:
         return alias_map
 
     def _find_reaching_defs(self, var: str, assignments: list[dict]) -> list[dict]:
-        """Find assignments where LHS matches the target variable."""
+        """Find assignments where LHS matches the target variable.
+
+        Returns all matching definitions (not just the most recent) to handle
+        phi-node patterns where if/else branches assign different values.
+        """
         results = []
-        for a in reversed(assignments):  # reverse for reaching definition
+        seen_lines: set[int] = set()
+        for a in reversed(assignments):
             lhs = a["lhs"]
-            if lhs == var:
+            if lhs == var and a["line"] not in seen_lines:
                 results.append(a)
-                break  # most recent definition
-            # also match field expressions: if var is "x->field", match "x->field"
-            if "->" in var or "." in var:
-                if lhs == var:
-                    results.append(a)
-                    break
+                seen_lines.add(a["line"])
         return results
 
     def _match_source(self, variable: str) -> bool:
-        """Check if a variable matches any source pattern."""
+        """Check if a variable matches any source pattern.
+
+        Also checks with '.' replaced by '->' (and vice versa) to handle
+        struct copy patterns where value-type access uses '.' but source
+        patterns expect '->'.
+        """
         for pattern in self._compiled_sources:
             if pattern.search(variable):
                 return True
+        # try with separator swapped: cfg.field ↔ cfg->field
+        if "." in variable and "->" not in variable:
+            swapped = variable.replace(".", "->", 1)
+            for pattern in self._compiled_sources:
+                if pattern.search(swapped):
+                    return True
         return False
 
     def _is_param(self, var: str, func_name: str, file_path: str) -> bool:
@@ -519,6 +562,26 @@ class TaintTracker:
                 if a["function"] == current_func and file_path == current_file:
                     continue
                 if a["lhs"].endswith(field_suffix):
+                    results.append((a["function"], file_path, a))
+        return results
+
+    def _find_cross_func_var_writers(
+        self, var: str, current_func: str, current_file: str,
+    ) -> list[tuple[str, str, dict]]:
+        """Find assignments in other functions that write to the same plain variable.
+
+        Used for global variable tracking: when a variable has no local def
+        and is not a parameter, search other functions for writes to the
+        same variable name.
+
+        Returns list of (writer_func, writer_file, assignment_dict).
+        """
+        results = []
+        for file_path, assignments in self._file_assignments.items():
+            for a in assignments:
+                if a["function"] == current_func and file_path == current_file:
+                    continue
+                if a["lhs"] == var:
                     results.append((a["function"], file_path, a))
         return results
 
