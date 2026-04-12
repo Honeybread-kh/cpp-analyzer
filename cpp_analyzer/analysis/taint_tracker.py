@@ -374,6 +374,30 @@ class TaintTracker:
                     ))
                     return chain
 
+            # fallback: cross-function struct field linking
+            # if var is a param field (e.g. fw->timing_val), search all
+            # functions for assignments to the same field name
+            if not callers:
+                writers = self._find_cross_func_field_writers(
+                    var, func_name, file_path,
+                )
+                for writer_func, writer_file, writer_assign in writers:
+                    for rhs_var in writer_assign["rhs_vars"]:
+                        chain = self._trace_backward(
+                            rhs_var, writer_func, writer_file,
+                            depth - 1, visited,
+                        )
+                        if chain:
+                            chain.append(TaintNode(
+                                variable=var,
+                                node_type="INTERMEDIATE",
+                                transform=writer_assign["transform"] or "",
+                                file=writer_file,
+                                line=writer_assign["line"],
+                                function=writer_func,
+                            ))
+                            return chain
+
         return None
 
     def _build_alias_map(self, assignments: list[dict]) -> AliasMap:
@@ -468,6 +492,34 @@ class TaintTracker:
                                 file_path,
                                 arg_expr,
                             ))
+        return results
+
+    def _find_cross_func_field_writers(
+        self, var: str, current_func: str, current_file: str,
+    ) -> list[tuple[str, str, dict]]:
+        """Find assignments in other functions that write to the same struct field.
+
+        When a parameter field like `fw->timing_val` has no callers, search
+        all functions for assignments whose LHS ends with the same field
+        suffix (e.g. `->timing_val`).
+
+        Returns list of (writer_func, writer_file, assignment_dict).
+        """
+        # extract field suffix: "fw->timing_val" → "->timing_val"
+        for sep in ("->", "."):
+            if sep in var:
+                field_suffix = sep + var.split(sep, 1)[1]
+                break
+        else:
+            return []
+
+        results = []
+        for file_path, assignments in self._file_assignments.items():
+            for a in assignments:
+                if a["function"] == current_func and file_path == current_file:
+                    continue
+                if a["lhs"].endswith(field_suffix):
+                    results.append((a["function"], file_path, a))
         return results
 
     def save_results(self, paths: list[DataFlowPath]) -> int:

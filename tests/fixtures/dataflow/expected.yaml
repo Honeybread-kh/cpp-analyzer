@@ -1,15 +1,30 @@
 # Expected dataflow analysis results for hw_model.c
 # Used by benchmark tests to verify analysis correctness.
 # Each entry: source → sink, with expected intermediate steps.
+#
+# ── 분석 능력 카테고리 ──
+#   basic              : 단일 함수 내 직접 대입 또는 산술 변환 추적
+#   alias_tracking     : 포인터 앨리어스 체인 (p=q; q->field=val)
+#   macro_sink         : 매크로 호출을 sink으로 인식 (REG_WRITE 등)
+#   inter_procedural   : 함수 경계를 넘는 데이터 흐름 추적
+#   conditional_tracking : 조건 분기(if/else) 내부 대입 추적
+#   compound_assignment  : 복합 대입 연산자(|=, <<=) 체인 역추적
 
 paths:
-  # ── direct config → register (should always work) ──
+  # ══════════════════════════════════════════════════════
+  # Easy: 단일 함수 내 직접 대입
+  # ══════════════════════════════════════════════════════
+
+  # 패턴: regs->regs[THRESH_REG] = cfg->threshold
+  # 설명: config 필드가 변환 없이 레지스터에 바로 대입
   - name: "direct threshold"
     source: "cfg->threshold"
     sink: "regs->regs[THRESH_REG]"
     min_depth: 2
     difficulty: easy
 
+  # 패턴: regs->regs[DIM_REG] = cfg->width | (cfg->height << 16)
+  # 설명: 두 config 필드가 비트 연산으로 합쳐져 하나의 레지스터에 대입
   - name: "direct dimension pack"
     source: "cfg->width"
     sink: "regs->regs[DIM_REG]"
@@ -22,7 +37,8 @@ paths:
     min_depth: 2
     difficulty: easy
 
-  # ── single function with transform ──
+  # 패턴: fw->clk_div = cfg->frequency / BASE_CLK
+  # 설명: config 필드에 산술 변환(÷)을 적용하여 FW 파라미터에 대입
   - name: "config to FW clk_div"
     source: "cfg->frequency"
     sink: "fw->clk_div"
@@ -30,13 +46,21 @@ paths:
     min_depth: 2
     difficulty: easy
 
+  # 패턴: fw->processed_mode = cfg->mode | (cfg->enable << 16)
+  # 설명: 비트OR 변환을 거쳐 FW 파라미터에 대입
   - name: "config to FW processed_mode"
     source: "cfg->mode"
     sink: "fw->processed_mode"
     min_depth: 2
     difficulty: easy
 
-  # ── pointer alias ──
+  # ══════════════════════════════════════════════════════
+  # Medium: 앨리어스 / 매크로 / 조건분기 / 복합대입
+  # ══════════════════════════════════════════════════════
+
+  # 패턴: HwRegs* hw = get_hw_regs(); HwRegs* r = hw; r->regs[X] = val
+  # 설명: 포인터가 다른 변수로 복사된 뒤 그 변수를 통해 레지스터에 쓰기.
+  #        앨리어스 체인(r → hw → 원본)을 추적해야 sink 인식 가능.
   - name: "alias register write"
     source: "cfg->enable"
     sink: "r->regs[CTRL_REG]"
@@ -44,7 +68,9 @@ paths:
     min_depth: 2
     difficulty: medium
 
-  # ── macro-based REG_WRITE ──
+  # 패턴: REG_WRITE(TIMING_REG, cfg->frequency)
+  # 설명: 매크로 호출이 실제 레지스터 쓰기. 매크로 이름을 sink 패턴으로
+  #        인식하고, 인자에서 값 변수를 추출해야 함.
   - name: "macro REG_WRITE frequency"
     source: "cfg->frequency"
     sink_pattern: "REG_WRITE.*TIMING_REG"
@@ -59,7 +85,35 @@ paths:
     min_depth: 2
     difficulty: medium
 
-  # ── inter-procedural (function boundary crossing) ──
+  # 패턴: if (cfg->enable) { regs->regs[X] = cfg->mode; } else { ... = 0; }
+  # 설명: 조건 분기 내부의 대입문 추적. if/else 양쪽 모두 도달 가능.
+  - name: "conditional register write"
+    source: "cfg->mode"
+    sink: "regs->regs[CTRL_REG]"
+    requires: conditional_tracking
+    min_depth: 2
+    difficulty: medium
+
+  # 패턴: val |= cfg->mode; val |= (cfg->threshold << 8); regs[X] = val
+  # 설명: 복합 대입(|=) 체인을 역추적하여 원래 config 필드까지 도달.
+  #        val의 reaching definition이 여러 개 (|= 각각).
+  - name: "compound assignment chain"
+    source: "cfg->mode"
+    sink: "regs->regs[CTRL_REG]"
+    requires: compound_assignment
+    min_depth: 3
+    difficulty: medium
+
+  # ══════════════════════════════════════════════════════
+  # Hard: 함수 경계를 넘는 inter-procedural 추적
+  # ══════════════════════════════════════════════════════
+
+  # 패턴: int div = compute_divider(cfg->frequency);
+  #        int timing = compute_timing(div);
+  #        regs->regs[TIMING_REG] = timing << 8;
+  # 설명: 값이 return을 통해 3개 함수를 거쳐 전파.
+  #        _trace_backward가 callee의 return 문으로 잠수하여
+  #        return값 → 파라미터 → 호출자 인자 체인을 역추적.
   - name: "multi-hop: config → divider → timing → reg"
     source: "cfg->frequency"
     sink: "regs->regs[TIMING_REG]"
@@ -68,7 +122,12 @@ paths:
     min_depth: 4
     difficulty: hard
 
-  # ── cross-function layer: config_to_fw → fw_to_hw ──
+  # 패턴: config_to_fw(cfg, fw)  → fw->clk_div = cfg->frequency / BASE_CLK
+  #        fw_to_hw(fw, regs)     → regs->regs[TIMING_REG] = fw->timing_val << 8
+  # 설명: 값이 구조체 포인터 필드를 매개로 함수 간 전달.
+  #        함수 A가 fw->field에 쓰고, 함수 B가 같은 fw->field를 읽는 패턴.
+  #        호출자가 같은 포인터를 두 함수에 전달한다고 가정하고,
+  #        필드 이름 기반으로 cross-function 연결을 수행해야 함.
   - name: "two-layer: config → fw → hw register"
     source: "cfg->frequency"
     sink: "regs->regs[TIMING_REG]"
@@ -76,22 +135,6 @@ paths:
     requires: inter_procedural
     min_depth: 4
     difficulty: hard
-
-  # ── conditional write ──
-  - name: "conditional register write"
-    source: "cfg->mode"
-    sink: "regs->regs[CTRL_REG]"
-    requires: conditional_tracking
-    min_depth: 2
-    difficulty: medium
-
-  # ── compound assignment chain ──
-  - name: "compound assignment chain"
-    source: "cfg->mode"
-    sink: "regs->regs[CTRL_REG]"
-    requires: compound_assignment
-    min_depth: 3
-    difficulty: medium
 
 # Scoring: each found path = 1 point
 # Difficulty multiplier: easy=1, medium=2, hard=3
