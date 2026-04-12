@@ -324,18 +324,20 @@ def trace_config(key, db, project_id, depth, chains):
 @click.option("--project-id", default=None, type=int)
 @click.option("--patterns",   default=None, type=click.Path(exists=True),
               help="YAML file with source/sink patterns")
-@click.option("--source",     default=None, help="Source pattern regex (overrides YAML sources)")
-@click.option("--sink",       default=None, help="Sink pattern regex (overrides YAML sinks)")
+@click.option("--source",     default=None, multiple=True, help="Source pattern regex (repeatable)")
+@click.option("--sink",       default=None, multiple=True, help="Sink pattern regex (repeatable)")
 @click.option("--depth",      default=5, show_default=True, help="Max trace depth")
 @click.option("--max-paths",  default=100, show_default=True, help="Max dataflow paths")
 @click.option("--save",       is_flag=True, help="Save results to DB")
 @click.option("--format",     "fmt", default="tree", type=click.Choice(["tree", "json"]),
               show_default=True, help="Output format")
-def trace_dataflow(db, project_id, patterns, source, sink, depth, max_paths, save, fmt):
+@click.option("--reverse",    default=None, help="Reverse trace: sink pattern regex to trace backward from")
+def trace_dataflow(db, project_id, patterns, source, sink, depth, max_paths, save, fmt, reverse):
     """Trace dataflow from config fields to register writes (taint analysis).
 
     Use --patterns to load source/sink patterns from a YAML file.
-    Use --source/--sink to specify a single regex pattern directly.
+    Use --source/--sink to specify regex patterns directly (repeatable).
+    Use --reverse to trace backward from a sink pattern.
     If none specified, built-in defaults are used.
     """
     from ..analysis.taint_tracker import (
@@ -357,44 +359,154 @@ def trace_dataflow(db, project_id, patterns, source, sink, depth, max_paths, sav
         console.print(f"[cyan]Loaded patterns: {len(yaml_sources)} sources, {len(yaml_sinks)} sinks[/cyan]")
 
     if source:
-        source_patterns = [{"name": "custom", "regex": source}]
+        source_patterns = [{"name": f"custom_{i}", "regex": s} for i, s in enumerate(source)]
     if sink:
-        sink_patterns = [{"name": "custom", "regex": sink}]
+        sink_patterns = [{"name": f"custom_{i}", "regex": s} for i, s in enumerate(sink)]
 
-    with console.status("[bold green]Running taint analysis..."):
+    tracker = TaintTracker(repo, pid, source_patterns, sink_patterns)
+
+    if reverse:
+        with console.status("[bold green]Running reverse taint analysis..."):
+            grouped = tracker.reverse_trace(reverse, max_depth=depth, max_paths=max_paths)
+
+        if not grouped:
+            console.print("[yellow]No dataflow paths found for the given sink pattern.[/yellow]")
+            repo.close()
+            return
+
+        total = sum(len(v) for v in grouped.values())
+        console.print(f"\n[bold]Found {total} path(s) to {len(grouped)} sink(s)[/bold]\n")
+
+        if fmt == "json":
+            import json as _json
+            data = {k: [p.to_dict() for p in v] for k, v in grouped.items()}
+            console.print(_json.dumps(data, indent=2))
+        else:
+            for sink_var, paths_list in grouped.items():
+                console.print(f"[bold red]Sink: {sink_var}[/bold red]")
+                for i, path in enumerate(paths_list, 1):
+                    tree_node = Tree(f"  [bold yellow]Path {i}[/bold yellow]: {path.source.variable}")
+                    nodes = [path.source] + path.steps + [path.sink]
+                    for node in nodes:
+                        style = {"SOURCE": "bold green", "SINK": "bold red"}.get(node.node_type, "cyan")
+                        label = f"[{style}]{node.variable}[/{style}]"
+                        if node.transform:
+                            label += f"  [dim]({node.transform})[/dim]"
+                        if node.file:
+                            label += f"  [blue]{node.file}:{node.line}[/blue]"
+                        if node.function:
+                            label += f"  [dim]{node.function}()[/dim]"
+                        tree_node.add(label)
+                    console.print(tree_node)
+                console.print()
+    else:
+        with console.status("[bold green]Running taint analysis..."):
+            paths = tracker.trace(max_depth=depth, max_paths=max_paths)
+
+        if save and paths:
+            count = tracker.save_results(paths)
+            console.print(f"[cyan]Saved {count} dataflow paths to DB[/cyan]")
+
+        if not paths:
+            console.print("[yellow]No dataflow paths found.[/yellow]")
+            repo.close()
+            return
+
+        console.print(f"\n[bold]Found {len(paths)} dataflow path(s)[/bold]\n")
+
+        if fmt == "json":
+            import json as _json
+            console.print(_json.dumps([p.to_dict() for p in paths], indent=2))
+        else:
+            for i, path in enumerate(paths, 1):
+                tree = Tree(f"[bold yellow]Path {i}[/bold yellow]: {path.source.variable} → {path.sink.variable}")
+                nodes = [path.source] + path.steps + [path.sink]
+                for j, node in enumerate(nodes):
+                    style = {"SOURCE": "bold green", "SINK": "bold red"}.get(node.node_type, "cyan")
+                    label = f"[{style}]{node.variable}[/{style}]"
+                    if node.transform:
+                        label += f"  [dim]({node.transform})[/dim]"
+                    if node.file:
+                        label += f"  [blue]{node.file}:{node.line}[/blue]"
+                    if node.function:
+                        label += f"  [dim]{node.function}()[/dim]"
+                    tree.add(label)
+                console.print(tree)
+                console.print()
+
+    repo.close()
+
+
+@cli.command("config-spec")
+@click.option("--db",         default=DEFAULT_DB, show_default=True)
+@click.option("--project-id", default=None, type=int)
+@click.option("--patterns",   default=None, type=click.Path(exists=True),
+              help="YAML file with source/sink patterns")
+@click.option("--source",     default=None, multiple=True, help="Source pattern regex (repeatable)")
+@click.option("--sink",       default=None, multiple=True, help="Sink pattern regex (repeatable)")
+@click.option("--depth",      default=5, show_default=True, help="Max trace depth")
+@click.option("--format",     "fmt", default="csv", type=click.Choice(["csv", "json", "yaml"]),
+              show_default=True, help="Output format")
+@click.option("--output",     default=None, type=click.Path(), help="Output file path")
+@click.option("--language",   is_flag=True, help="Export full config constraint language (YAML)")
+def config_spec(db, project_id, patterns, source, sink, depth, fmt, output, language):
+    """Export config field specifications with enum/range metadata.
+
+    Runs dataflow analysis, generates ConfigFieldSpec for each struct field,
+    and exports in CSV, JSON, or YAML format.
+    Use --language for full config constraint spec with gating/co-dependency info.
+    """
+    from ..analysis.taint_tracker import (
+        TaintTracker, DEFAULT_SOURCE_PATTERNS, DEFAULT_SINK_PATTERNS,
+        load_patterns_yaml,
+        export_specs_csv, export_specs_json, export_specs_yaml,
+        export_config_language,
+    )
+
+    repo = _get_repo(db)
+    pid = _resolve_project(repo, project_id)
+
+    source_patterns = DEFAULT_SOURCE_PATTERNS
+    sink_patterns = DEFAULT_SINK_PATTERNS
+
+    if patterns:
+        yaml_sources, yaml_sinks = load_patterns_yaml(patterns)
+        if yaml_sources:
+            source_patterns = yaml_sources
+        if yaml_sinks:
+            sink_patterns = yaml_sinks
+
+    if source:
+        source_patterns = [{"name": f"custom_{i}", "regex": s} for i, s in enumerate(source)]
+    if sink:
+        sink_patterns = [{"name": f"custom_{i}", "regex": s} for i, s in enumerate(sink)]
+
+    with console.status("[bold green]Running dataflow analysis for config specs..."):
         tracker = TaintTracker(repo, pid, source_patterns, sink_patterns)
-        paths = tracker.trace(max_depth=depth, max_paths=max_paths)
+        paths = tracker.trace(max_depth=depth)
+        specs = tracker.generate_config_specs(paths=paths)
 
-    if save and paths:
-        count = tracker.save_results(paths)
-        console.print(f"[cyan]Saved {count} dataflow paths to DB[/cyan]")
-
-    if not paths:
-        console.print("[yellow]No dataflow paths found.[/yellow]")
+    if not specs:
+        console.print("[yellow]No config field specs found.[/yellow]")
         repo.close()
         return
 
-    console.print(f"\n[bold]Found {len(paths)} dataflow path(s)[/bold]\n")
-
-    if fmt == "json":
-        import json as _json
-        console.print(_json.dumps([p.to_dict() for p in paths], indent=2))
+    if language:
+        tracker.detect_gating(specs, paths)
+        tracker.detect_co_dependencies(specs, paths)
+        text = export_config_language(specs, paths)
+    elif fmt == "csv":
+        text = export_specs_csv(specs)
+    elif fmt == "json":
+        text = export_specs_json(specs)
     else:
-        for i, path in enumerate(paths, 1):
-            tree = Tree(f"[bold yellow]Path {i}[/bold yellow]: {path.source.variable} → {path.sink.variable}")
-            nodes = [path.source] + path.steps + [path.sink]
-            for j, node in enumerate(nodes):
-                style = {"SOURCE": "bold green", "SINK": "bold red"}.get(node.node_type, "cyan")
-                label = f"[{style}]{node.variable}[/{style}]"
-                if node.transform:
-                    label += f"  [dim]({node.transform})[/dim]"
-                if node.file:
-                    label += f"  [blue]{node.file}:{node.line}[/blue]"
-                if node.function:
-                    label += f"  [dim]{node.function}()[/dim]"
-                tree.add(label)
-            console.print(tree)
-            console.print()
+        text = export_specs_yaml(specs)
+
+    if output:
+        Path(output).write_text(text)
+        console.print(f"[green]Config spec written to {output} ({len(specs)} fields)[/green]")
+    else:
+        console.print(text)
 
     repo.close()
 

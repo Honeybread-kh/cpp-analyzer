@@ -676,6 +676,159 @@ def trace_dataflow(
     return "\n".join(lines)
 
 
+@mcp.tool()
+def reverse_trace_dataflow(
+    sink_pattern: str,
+    source_pattern: str | None = None,
+    patterns_file: str | None = None,
+    db_path: str | None = None,
+    project_id: int | None = None,
+    max_depth: int = 5,
+    max_paths: int = 100,
+) -> str:
+    """
+    Reverse trace: find all config sources that reach sinks matching a pattern.
+    Results are grouped by sink variable.
+
+    Args:
+        sink_pattern:   Regex pattern to filter sinks (required).
+        source_pattern: Regex for source variables (default: config/cfg/param field patterns).
+        patterns_file:  Path to YAML file with source/sink pattern definitions.
+        max_depth:      Maximum trace depth across function calls (default 5).
+        max_paths:      Maximum number of paths to find (default 100).
+    """
+    from .analysis.taint_tracker import (
+        TaintTracker, DEFAULT_SOURCE_PATTERNS, DEFAULT_SINK_PATTERNS, load_patterns_yaml,
+    )
+
+    db   = _default_db(db_path)
+    repo = _repo(db)
+    pid  = _resolve_project_id(repo, project_id)
+    if pid is None:
+        repo.close()
+        return "No project found. Run index_project first."
+
+    source_patterns = DEFAULT_SOURCE_PATTERNS
+    sink_patterns = DEFAULT_SINK_PATTERNS
+
+    if patterns_file:
+        try:
+            yaml_sources, yaml_sinks = load_patterns_yaml(patterns_file)
+            if yaml_sources:
+                source_patterns = yaml_sources
+            if yaml_sinks:
+                sink_patterns = yaml_sinks
+        except Exception as e:
+            repo.close()
+            return f"Error loading patterns file: {e}"
+
+    if source_pattern:
+        source_patterns = [{"name": "custom", "regex": source_pattern}]
+
+    tracker = TaintTracker(repo, pid, source_patterns, sink_patterns)
+    grouped = tracker.reverse_trace(sink_pattern, max_depth=max_depth, max_paths=max_paths)
+    repo.close()
+
+    if not grouped:
+        return "No dataflow paths found for the given sink pattern."
+
+    total = sum(len(v) for v in grouped.values())
+    lines = [f"Found {total} path(s) to {len(grouped)} sink(s):", ""]
+
+    for sink_var, paths_list in grouped.items():
+        lines.append(f"=== Sink: {sink_var} ({len(paths_list)} path(s)) ===")
+        for i, path in enumerate(paths_list, 1):
+            lines.append(f"  --- Path {i} ---")
+            lines.append(f"  {path.format_chain()}")
+            lines.append("")
+
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def export_config_spec(
+    format: str = "csv",
+    source_pattern: str | None = None,
+    sink_pattern: str | None = None,
+    patterns_file: str | None = None,
+    db_path: str | None = None,
+    project_id: int | None = None,
+    max_depth: int = 5,
+    include_language: bool = False,
+) -> str:
+    """
+    Export config field specifications with enum/range metadata.
+
+    Runs dataflow analysis, generates ConfigFieldSpec for each struct field,
+    and returns in CSV, JSON, or YAML format.
+
+    Args:
+        format:           Output format: "csv", "json", or "yaml" (default: "csv").
+        source_pattern:   Regex for source variables.
+        sink_pattern:     Regex for sink variables.
+        patterns_file:    Path to YAML file with source/sink patterns.
+        max_depth:        Maximum trace depth (default 5).
+        include_language: If true, export full config constraint language (YAML)
+                          with gating/co-dependency info instead of simple spec.
+    """
+    from .analysis.taint_tracker import (
+        TaintTracker, DEFAULT_SOURCE_PATTERNS, DEFAULT_SINK_PATTERNS,
+        load_patterns_yaml,
+        export_specs_csv, export_specs_json, export_specs_yaml,
+        export_config_language,
+    )
+
+    db   = _default_db(db_path)
+    repo = _repo(db)
+    pid  = _resolve_project_id(repo, project_id)
+    if pid is None:
+        repo.close()
+        return "No project found. Run index_project first."
+
+    source_patterns = DEFAULT_SOURCE_PATTERNS
+    sink_patterns_list = DEFAULT_SINK_PATTERNS
+
+    if patterns_file:
+        try:
+            yaml_sources, yaml_sinks = load_patterns_yaml(patterns_file)
+            if yaml_sources:
+                source_patterns = yaml_sources
+            if yaml_sinks:
+                sink_patterns_list = yaml_sinks
+        except Exception as e:
+            repo.close()
+            return f"Error loading patterns file: {e}"
+
+    if source_pattern:
+        source_patterns = [{"name": "custom", "regex": source_pattern}]
+    if sink_pattern:
+        sink_patterns_list = [{"name": "custom", "regex": sink_pattern}]
+
+    tracker = TaintTracker(repo, pid, source_patterns, sink_patterns_list)
+    paths = tracker.trace(max_depth=max_depth)
+    specs = tracker.generate_config_specs(paths=paths)
+
+    if not specs:
+        repo.close()
+        return "No config field specs found."
+
+    if include_language:
+        tracker.detect_gating(specs, paths)
+        tracker.detect_co_dependencies(specs, paths)
+        result = export_config_language(specs, paths)
+    elif format == "csv":
+        result = export_specs_csv(specs)
+    elif format == "json":
+        result = export_specs_json(specs)
+    elif format == "yaml":
+        result = export_specs_yaml(specs)
+    else:
+        result = export_specs_csv(specs)
+
+    repo.close()
+    return result
+
+
 # ── file dependency tools ────────────────────────────────────────────────────
 
 @mcp.tool()

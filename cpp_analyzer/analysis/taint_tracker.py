@@ -756,6 +756,126 @@ class TaintTracker:
 
         spec.description = "; ".join(desc_parts)
 
+    def reverse_trace(
+        self,
+        sink_pattern: str,
+        max_depth: int = 5,
+        max_paths: int = 100,
+    ) -> dict[str, list[DataFlowPath]]:
+        """Reverse trace: find all sources that reach sinks matching a pattern.
+
+        Args:
+            sink_pattern: Regex pattern to filter sinks.
+            max_depth: Maximum trace depth.
+            max_paths: Maximum total paths.
+
+        Returns:
+            Dict mapping sink variable -> list of DataFlowPaths reaching it.
+        """
+        compiled = re.compile(sink_pattern)
+        # Save original sink patterns and temporarily replace
+        orig_sinks = self.sink_patterns
+        orig_compiled = self._compiled_sinks
+        self.sink_patterns = [{"name": "reverse_filter", "regex": sink_pattern}]
+        self._compiled_sinks = [compiled]
+
+        paths = self.trace(max_depth=max_depth, max_paths=max_paths)
+
+        # Restore
+        self.sink_patterns = orig_sinks
+        self._compiled_sinks = orig_compiled
+
+        # Group by sink variable
+        grouped: dict[str, list[DataFlowPath]] = {}
+        for p in paths:
+            grouped.setdefault(p.sink.variable, []).append(p)
+
+        return grouped
+
+    def detect_gating(self, specs: list[ConfigFieldSpec], paths: list[DataFlowPath]) -> None:
+        """Detect gating relationships and populate gated_by/gates on specs.
+
+        Uses ts_parser.extract_gating_conditions() to find if-condition
+        patterns where one config field gates writes to another.
+        """
+        if not self._file_assignments:
+            self._load_all_files()
+
+        # Collect all gating info from all files
+        all_gatings: list[dict] = []
+        files = self.repo.list_files(self.project_id)
+        for f in files:
+            rp = f["relative_path"]
+            if not rp.endswith((".c", ".cpp", ".cc", ".cxx", ".h", ".hpp", ".hxx")):
+                continue
+            path = f["path"]
+            root = ts_parser.parse_file(path)
+            if root is None:
+                continue
+            gatings = ts_parser.extract_gating_conditions(root)
+            all_gatings.extend(gatings)
+
+        # Build gating map: gated_field -> set of gating fields
+        gated_by_map: dict[str, set[str]] = {}
+        gates_map: dict[str, set[str]] = {}
+        for g in all_gatings:
+            gating = g["gating_field"]
+            for gated in g["gated_vars"]:
+                gated_by_map.setdefault(gated, set()).add(gating)
+                gates_map.setdefault(gating, set()).add(gated)
+
+        # Apply to specs
+        for spec in specs:
+            fn = spec.field_name
+            if fn in gated_by_map:
+                gating_fields = sorted(gated_by_map[fn])
+                spec.gated_by = gating_fields[0] if len(gating_fields) == 1 else "|".join(gating_fields)
+            if fn in gates_map:
+                spec.gates = sorted(gates_map[fn])
+
+    def detect_co_dependencies(self, specs: list[ConfigFieldSpec], paths: list[DataFlowPath]) -> None:
+        """Detect co-dependencies: config fields that contribute to the same sink.
+
+        Populates co_depends on each spec with other fields sharing a sink.
+        """
+        # Build sink -> set of source field names
+        sink_to_sources: dict[str, set[str]] = {}
+        for p in paths:
+            src = p.source.variable
+            # extract field name from "cfg->field" or "ecfg->field"
+            for sep in ("->", "."):
+                if sep in src:
+                    field_name = src.split(sep)[-1]
+                    break
+            else:
+                field_name = src
+
+            sink_var = p.sink.variable
+            sink_to_sources.setdefault(sink_var, set()).add(field_name)
+
+        # For each spec, find co-dependent fields (same sink, different field)
+        spec_sinks: dict[str, set[str]] = {}  # field -> set of sinks
+        for p in paths:
+            src = p.source.variable
+            for sep in ("->", "."):
+                if sep in src:
+                    field_name = src.split(sep)[-1]
+                    break
+            else:
+                field_name = src
+            spec_sinks.setdefault(field_name, set()).add(p.sink.variable)
+
+        for spec in specs:
+            fn = spec.field_name
+            if fn not in spec_sinks:
+                continue
+            co_deps: set[str] = set()
+            for sink_var in spec_sinks[fn]:
+                for other_field in sink_to_sources.get(sink_var, set()):
+                    if other_field != fn:
+                        co_deps.add(other_field)
+            spec.co_depends = sorted(co_deps)
+
     def save_results(self, paths: list[DataFlowPath]) -> int:
         """Save analysis results to the database."""
         self.repo.delete_dataflow_paths(self.project_id)
@@ -768,3 +888,71 @@ class TaintTracker:
                 depth=path.depth,
             )
         return len(paths)
+
+
+# ── export functions ─────────────────────────────────────────────────────────
+
+def export_specs_csv(specs: list[ConfigFieldSpec]) -> str:
+    """Export ConfigFieldSpec list to CSV string."""
+    import csv
+    import io
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(ConfigFieldSpec.CSV_HEADERS)
+    for s in specs:
+        writer.writerow(s.csv_row())
+    return buf.getvalue()
+
+
+def export_specs_json(specs: list[ConfigFieldSpec]) -> str:
+    """Export ConfigFieldSpec list to JSON string."""
+    from dataclasses import asdict
+    return json.dumps([asdict(s) for s in specs], indent=2)
+
+
+def export_specs_yaml(specs: list[ConfigFieldSpec]) -> str:
+    """Export ConfigFieldSpec list to YAML string."""
+    import yaml
+    from dataclasses import asdict
+    data = [asdict(s) for s in specs]
+    return yaml.dump(data, default_flow_style=False, allow_unicode=True, sort_keys=False)
+
+
+def export_config_language(specs: list[ConfigFieldSpec], paths: list[DataFlowPath]) -> str:
+    """Export full config constraint spec as YAML (config language).
+
+    Includes gating, co-dependency, enum/range constraints, and sink mappings.
+    """
+    import yaml
+
+    config_lang: dict = {"config_fields": []}
+    for s in specs:
+        entry: dict = {
+            "name": f"{s.struct_name}.{s.field_name}" if s.struct_name else s.field_name,
+            "type": s.field_type,
+        }
+        if s.enum_type:
+            entry["enum"] = {"type": s.enum_type, "values": s.enum_values}
+        if s.min_value is not None or s.max_value is not None:
+            rng: dict = {}
+            if s.min_value is not None:
+                rng["min"] = s.min_value
+            if s.max_value is not None:
+                rng["max"] = s.max_value
+            entry["range"] = rng
+        if s.register_sinks:
+            entry["sinks"] = s.register_sinks
+        if s.transforms:
+            entry["transforms"] = s.transforms
+        if s.gated_by:
+            entry["gated_by"] = s.gated_by
+        if s.gates:
+            entry["gates"] = s.gates
+        if s.co_depends:
+            entry["co_depends"] = s.co_depends
+        if s.description:
+            entry["description"] = s.description
+
+        config_lang["config_fields"].append(entry)
+
+    return yaml.dump(config_lang, default_flow_style=False, allow_unicode=True, sort_keys=False)

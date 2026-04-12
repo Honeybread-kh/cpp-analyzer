@@ -378,6 +378,168 @@ class TestConfigSpecGeneration:
         assert "MODE_LOW" in spec.description
 
 
+# ── reverse trace tests ──────────────────────────────────────────────────────
+
+class TestReverseTrace:
+    """Test reverse_trace: find sources reaching specific sinks."""
+
+    def test_reverse_trace_finds_sources(self, analysis_db):
+        """Reverse trace with a sink pattern should find sources reaching it."""
+        repo, pid, _ = analysis_db
+        source_patterns = [
+            {"name": "config_field", "regex": r"cfg->(\w+)"},
+            {"name": "ext_config_field", "regex": r"ecfg->(\w+)"},
+        ]
+        sink_patterns = [
+            {"name": "reg_array", "regex": r"(?:regs|r|hw)->regs\["},
+            {"name": "fw_field", "regex": r"fw->(\w+)\s*="},
+            {"name": "REG_WRITE", "regex": r"REG_WRITE\s*\("},
+        ]
+        tracker = TaintTracker(repo, pid, source_patterns, sink_patterns)
+        grouped = tracker.reverse_trace(r"regs\[THRESH_REG\]", max_depth=5)
+        assert len(grouped) > 0, "reverse_trace should find at least one sink group"
+
+        # Check that at least one source contains "threshold"
+        all_sources = []
+        for paths_list in grouped.values():
+            for p in paths_list:
+                all_sources.append(p.source.variable)
+        assert any("threshold" in s for s in all_sources), \
+            f"Expected 'threshold' source for THRESH_REG, got: {all_sources}"
+
+    def test_reverse_trace_groups_by_sink(self, analysis_db):
+        """Results should be grouped by sink variable."""
+        repo, pid, _ = analysis_db
+        source_patterns = [
+            {"name": "config_field", "regex": r"cfg->(\w+)"},
+        ]
+        sink_patterns = [
+            {"name": "reg_array", "regex": r"(?:regs|r|hw)->regs\["},
+            {"name": "fw_field", "regex": r"fw->(\w+)\s*="},
+        ]
+        tracker = TaintTracker(repo, pid, source_patterns, sink_patterns)
+        grouped = tracker.reverse_trace(r"regs\[", max_depth=5)
+        # Each key should be a sink variable
+        for sink_var, paths_list in grouped.items():
+            for p in paths_list:
+                assert p.sink.variable == sink_var
+
+
+# ── config export tests ──────────────────────────────────────────────────────
+
+class TestConfigExport:
+    """Test CSV/JSON/YAML export of ConfigFieldSpec."""
+
+    @pytest.fixture(scope="class")
+    def specs_and_paths(self, analysis_db):
+        repo, pid, paths = analysis_db
+        source_patterns = [
+            {"name": "config_field", "regex": r"cfg->(\w+)"},
+            {"name": "ext_config_field", "regex": r"ecfg->(\w+)"},
+        ]
+        sink_patterns = [
+            {"name": "reg_array", "regex": r"(?:regs|r|hw)->regs\["},
+            {"name": "fw_field", "regex": r"fw->(\w+)\s*="},
+            {"name": "REG_WRITE", "regex": r"REG_WRITE\s*\("},
+        ]
+        tracker = TaintTracker(repo, pid, source_patterns, sink_patterns)
+        tracker._load_all_files()
+        specs = tracker.generate_config_specs(paths=paths)
+        return specs, paths
+
+    def test_csv_export(self, specs_and_paths):
+        """CSV export should have headers and rows."""
+        from cpp_analyzer.analysis.taint_tracker import export_specs_csv
+        specs, _ = specs_and_paths
+        csv_text = export_specs_csv(specs)
+        lines = csv_text.strip().split("\n")
+        assert len(lines) > 1, "CSV should have header + at least one data row"
+        assert "field_name" in lines[0]
+        assert "struct_name" in lines[0]
+
+    def test_json_export(self, specs_and_paths):
+        """JSON export should be valid JSON with expected fields."""
+        import json as _json
+        from cpp_analyzer.analysis.taint_tracker import export_specs_json
+        specs, _ = specs_and_paths
+        json_text = export_specs_json(specs)
+        data = _json.loads(json_text)
+        assert isinstance(data, list)
+        assert len(data) > 0
+        assert "field_name" in data[0]
+        assert "gated_by" in data[0]
+        assert "gates" in data[0]
+        assert "co_depends" in data[0]
+
+    def test_yaml_export(self, specs_and_paths):
+        """YAML export should be valid YAML with expected fields."""
+        from cpp_analyzer.analysis.taint_tracker import export_specs_yaml
+        specs, _ = specs_and_paths
+        yaml_text = export_specs_yaml(specs)
+        data = yaml.safe_load(yaml_text)
+        assert isinstance(data, list)
+        assert len(data) > 0
+        assert "field_name" in data[0]
+
+
+# ── config language tests ────────────────────────────────────────────────────
+
+class TestConfigLanguage:
+    """Test config constraint language export with gating/co-dependency."""
+
+    @pytest.fixture(scope="class")
+    def language_output(self, analysis_db):
+        """Generate config language output."""
+        from cpp_analyzer.analysis.taint_tracker import export_config_language
+        repo, pid, paths = analysis_db
+        source_patterns = [
+            {"name": "config_field", "regex": r"cfg->(\w+)"},
+            {"name": "ext_config_field", "regex": r"ecfg->(\w+)"},
+        ]
+        sink_patterns = [
+            {"name": "reg_array", "regex": r"(?:regs|r|hw)->regs\["},
+            {"name": "fw_field", "regex": r"fw->(\w+)\s*="},
+            {"name": "REG_WRITE", "regex": r"REG_WRITE\s*\("},
+        ]
+        tracker = TaintTracker(repo, pid, source_patterns, sink_patterns)
+        tracker._load_all_files()
+        specs = tracker.generate_config_specs(paths=paths)
+        tracker.detect_gating(specs, paths)
+        tracker.detect_co_dependencies(specs, paths)
+        lang_yaml = export_config_language(specs, paths)
+        return yaml.safe_load(lang_yaml), specs
+
+    def test_language_has_config_fields(self, language_output):
+        """Config language YAML should have config_fields key."""
+        data, _ = language_output
+        assert "config_fields" in data
+        assert len(data["config_fields"]) > 0
+
+    def test_language_fields_have_name_and_type(self, language_output):
+        """Each config field entry should have name and type."""
+        data, _ = language_output
+        for entry in data["config_fields"]:
+            assert "name" in entry
+            assert "type" in entry
+
+    def test_gating_detected(self, language_output):
+        """At least some gating relationships should be detected."""
+        _, specs = language_output
+        gated = [s for s in specs if s.gated_by]
+        gating = [s for s in specs if s.gates]
+        # The test fixture has if(cfg->enable) { ... } patterns
+        # so we expect at least some gating
+        assert len(gated) > 0 or len(gating) > 0, \
+            "Expected at least one gating relationship from test fixtures"
+
+    def test_co_dependency_detected(self, language_output):
+        """At least some co-dependency relationships should be detected."""
+        _, specs = language_output
+        co_dep = [s for s in specs if s.co_depends]
+        assert len(co_dep) > 0, \
+            "Expected at least one co-dependency from test fixtures"
+
+
 # ── benchmark scoring ─────────────────────────────────────────────────────────
 
 class TestBenchmark:

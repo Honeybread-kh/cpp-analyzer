@@ -144,6 +144,35 @@ class ConfigFieldSpec:
     description: str = ""
     file: str = ""
     line: int = 0
+    gated_by: str | None = None
+    gates: list[str] = field(default_factory=list)
+    co_depends: list[str] = field(default_factory=list)
+
+    CSV_HEADERS = [
+        "field_name", "struct_name", "field_type", "enum_type", "enum_values",
+        "min_value", "max_value", "register_sinks", "transforms",
+        "description", "file", "line",
+        "gated_by", "gates", "co_depends",
+    ]
+
+    def csv_row(self) -> list[str]:
+        return [
+            self.field_name,
+            self.struct_name,
+            self.field_type,
+            self.enum_type or "",
+            "|".join(self.enum_values),
+            self.min_value or "",
+            self.max_value or "",
+            "|".join(self.register_sinks),
+            "|".join(self.transforms),
+            self.description,
+            self.file,
+            str(self.line),
+            self.gated_by or "",
+            "|".join(self.gates),
+            "|".join(self.co_depends),
+        ]
 
     def to_dict(self) -> dict:
         return asdict(self)

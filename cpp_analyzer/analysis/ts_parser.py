@@ -914,6 +914,71 @@ def _extract_simple_assignments(node: Node) -> list[dict]:
     return results
 
 
+# ── gating condition extraction ────────────────────────────────────────────
+
+def extract_gating_conditions(root: Node) -> list[dict]:
+    """Extract gating conditions: if (config_field) { assignment to sink/config }.
+
+    Detects patterns where one config field (in an if-condition) controls
+    writes to other config fields or sink registers.
+
+    Returns list of dicts:
+        gating_field, gated_vars (list[str]), line, function
+    """
+    results = []
+    for if_node in walk_type(root, "if_statement"):
+        cond = if_node.child_by_field_name("condition")
+        cons = if_node.child_by_field_name("consequence")
+        if cond is None or cons is None:
+            continue
+
+        # extract field names referenced in condition
+        cond_fields = _extract_all_field_names(cond)
+        if not cond_fields:
+            continue
+
+        # extract all assigned targets in consequence (field assignments + general)
+        gated_vars = []
+
+        # 1. direct field assignments (ptr->field = ...)
+        assigns = _extract_field_assignments(cons)
+        for a in assigns:
+            if a["field_name"] not in cond_fields:
+                gated_vars.append(a["field_name"])
+
+        # 2. general assignments: capture field names from RHS of any assignment
+        #    and LHS identifiers/fields (catches subscript patterns like regs->regs[X] = ...)
+        for assign in walk_type(cons, "assignment_expression"):
+            left = assign.child_by_field_name("left")
+            right = assign.child_by_field_name("right")
+            if left is None or right is None:
+                continue
+            # extract field names from LHS (e.g. regs->regs from regs->regs[X])
+            lhs_fields = _extract_all_field_names(left)
+            for fn in lhs_fields:
+                if fn not in cond_fields and fn not in gated_vars:
+                    gated_vars.append(fn)
+            # extract field names from RHS (e.g. cfg->mode)
+            rhs_fields = _extract_all_field_names(right)
+            for fn in rhs_fields:
+                if fn not in cond_fields and fn not in gated_vars:
+                    gated_vars.append(fn)
+
+        if not gated_vars:
+            continue
+
+        func_name = _find_enclosing_function(if_node)
+        for gating_field in cond_fields:
+            results.append({
+                "gating_field": gating_field,
+                "gated_vars": list(set(gated_vars)),
+                "line": if_node.start_point[0] + 1,
+                "function": func_name or "",
+            })
+
+    return results
+
+
 # ── variable extraction ────────────────────────────────────────────────────
 
 def _extract_variables(node: Node) -> list[str]:
