@@ -622,6 +622,26 @@ paths:
     min_depth: 2
     difficulty: hard
 
+  # ══════════════════════════════════════════════════════
+  # B1: memcpy bulk-copy taint propagation
+  # ══════════════════════════════════════════════════════
+
+  - name: "memcpy bulk copy frequency"
+    source: "mcfg->frequency"
+    sink: "MC_TIMING_REG"
+    expected_function: "memcpy_bulk_write"
+    requires: memcpy_bulk_copy
+    min_depth: 2
+    difficulty: hard
+
+  - name: "memcpy bulk copy mode"
+    source: "mcfg->mode"
+    sink: "MC_MODE_REG"
+    expected_function: "memcpy_bulk_write"
+    requires: memcpy_bulk_copy
+    min_depth: 2
+    difficulty: hard
+
 # Scoring: each found path = 1 point
 # Difficulty multiplier: easy=1, medium=2, hard=3
 # Total possible score: sum of all (1 * multiplier)

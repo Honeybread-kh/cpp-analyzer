@@ -1,192 +1,252 @@
-# Evolution Proposal — 2026-04-13 (Coverage Expansion)
+# Evolution Proposal — 2026-04-13
 
 ## 현재 상태
-- 점수: 97/97 (100%), 0 regressions, 0 gaps
-- 벤치마크 기준 추출 가능한 gap 소진 → **fixture 자체를 확장**하는 방향으로 전환
-- 기존 커버 패턴: single-func taint, 2-hop inter-procedural, alias, union raw/parts, fnptr (local/struct/global), macro expansion, volatile MMIO, ptr arith, cast passthrough, struct-array cross-func, global relay, range clamp
-- **미커버 영역**: 깊은 호출 체인(≥3 hop), 조건부 alias/phi, 링크드 리스트·컨테이너 순회, C++ 가상 디스패치, 비트필드/flexible array, 조건부 컴파일, 멀티 콜백 등록
-
-전체 `hw_model.c`는 단일 파일/다소 평탄한 함수 구조이고, `multifile/`은 2-hop 수준만 포함. 실제 대규모 임베디드/커널 스타일 코드베이스에서 흔히 나타나는 다층/컨테이너 패턴이 체계적으로 비어있다.
+- 점수: 97/97 (100%), 0 regressions (`_workspace_evo/01_benchmark_current.json`)
+- 방금 진화된 gap: P1(deep chain 5-hop + mutual recursion), P2(conditional alias / linked-list / dynamic index), P3(C++ 가상 dispatch, 멤버 함수 포인터는 xfail), P4(#ifdef 양쪽 분기), P5(multi-callback 배열 등록자 / bitfield type-pun / flexible array member)
+- 신규 fixture 5개 (`deep_chain.c`, `aliasing_advanced.c`, `cpp_dispatch.cpp`, `ifdef_variants.c`, `callbacks_multi.c`) + `TestDeepChain` / `TestCppDispatch` / `TestIfdefVariants` / `TestMultiCallback` / `TestAliasingAdvanced` 클래스 (15 PASS + 1 xfail)
+- **문제:** `TestBenchmark` 스코어러는 `tests/fixtures/dataflow/expected.yaml` 만 소비하는데, P1~P5 케이스는 해당 YAML에 **한 줄도 없다**. 즉 100% 점수는 이전 패턴 집합의 완전 재달성일 뿐이며, P1~P5 진화는 pytest 클래스에서만 검증되고 스코어러의 해상도 바깥에 있다. 다음 진화 사이클에서 회귀/개선을 계속 측정하려면 expected.yaml 확장이 선결 조건.
 
 ---
 
-## 제안 패턴 (우선순위 순)
+## A) 측정 확장 — P1~P5를 스코어러에 통합
 
-### P1 — Deep call chain (4~6 hop) with mixed parameter/return propagation
-- **Why it matters:** 실제 HAL/driver 코드는 `app_layer → service → hal → mmio_writer → reg_backend` 처럼 4~6단 호출이 일상. 현재 fixture는 최대 2-hop(`compute_divider → compute_timing`)이라 `_trace_backward`의 재귀 깊이/visited 처리가 실전 규모에서 동작하는지 검증되지 않는다. 100% 점수가 "scale 내성"을 의미하지 않는다.
-- **Fixture sketch** (`deep_chain.c` + 헤더 하나):
-  ```c
-  // 5-hop: cfg->frequency → stage1 → stage2 → stage3 → stage4 → reg
-  static uint32_t stage4(uint32_t v) { return v << 2; }
-  static uint32_t stage3(uint32_t v) { return stage4(v) | 0x1; }
-  static uint32_t stage2(uint32_t v) { return stage3(v / 2); }
-  static uint32_t stage1(uint32_t v) { return stage2(v + 1); }
-  void deep_chain_write(Config* cfg, HwRegs* regs) {
-      regs->regs[TIMING_REG] = stage1(cfg->frequency);
-  }
-  // 추가: 상호 재귀 (even/odd 스타일) — taint depth 제한 검증용
-  static uint32_t taint_even(uint32_t, int);
-  static uint32_t taint_odd(uint32_t v, int n)  { return n==0 ? v : taint_even(v, n-1); }
-  static uint32_t taint_even(uint32_t v, int n) { return n==0 ? v : taint_odd(v+1, n-1); }
-  void mutual_recurse_write(Config* cfg, HwRegs* regs) {
-      regs->regs[MODE_REG] = taint_odd(cfg->mode, 3);
-  }
-  ```
-- **Expected gap:** `cpp_analyzer/analysis/taint_tracker.py::_trace_backward`와 `_find_callers_with_args`의 재귀 깊이 상한(현재 하드코딩 또는 visited set 기반으로 추정)이 4-hop 이상에서 조기 종료하거나 상호 재귀에서 무한 루프 방지 로직이 첫 hop에서 taint를 잃을 가능성. 특히 return-value chain은 각 callee를 다시 열어야 하므로 `_find_function_returns` (또는 대응 로직) 호출이 기하급수적으로 늘어난다.
-- **Implementation hint:** 
-  - `taint_tracker.py`의 재귀 깊이 파라미터(`max_depth`) 노출/튜닝
-  - return-value 추적에서 callee 방문 캐시(memoization) 추가
-  - 상호 재귀 대응을 위한 `(func, var)` 튜플 기반 visited set
+### A.0 전제 확인
+- `analysis_db` fixture (test_dataflow.py:34)는 `FIXTURES_DIR` 전체를 인덱싱하므로 P1~P5 fixture의 dataflow path는 이미 `paths`에 존재한다. `TestBenchmark`가 못 보는 이유는 오직 expected.yaml에 엔트리가 없어서다.
+- `_find_path` (test_dataflow.py:78)는 `source_substr`, `sink_substr`/`sink_pattern`, `expected_function`(sink/steps의 function 이름 어디든 매칭)을 지원한다. 현재 사용되는 포맷 그대로 P1~P5를 기술할 수 있다.
+- `TestCppDispatch::test_member_fn_ptr`는 xfail 로 유지되므로 expected.yaml에는 넣지 않는다.
 
----
+### A.1 expected.yaml에 추가할 엔트리 (16건, 난이도 합 +41점)
 
-### P2 — Conditional alias & linked-list / container traversal
-- **Why it matters:** 커널/드라이버 코드의 전형: `p = cond ? &a : &b; p->field = tainted;` 그리고 `for (node = head; node; node = node->next) node->reg = cfg->x;`. 현재 alias 추적은 단일 대입(`r = hw`)만 커버. 조건부 alias와 반복자 기반 전파는 비어있다.
-- **Fixture sketch:**
-  ```c
-  // (a) 조건부 alias
-  void cond_alias_write(Config* cfg, HwRegs* ra, HwRegs* rb, int sel) {
-      HwRegs* p = sel ? ra : rb;  // phi on pointer
-      p->regs[TIMING_REG] = cfg->frequency;
-  }
-  // (b) 링크드 리스트 순회
-  typedef struct Node { struct Node* next; HwRegs* regs; } Node;
-  void list_walk_write(Config* cfg, Node* head) {
-      for (Node* n = head; n; n = n->next) {
-          n->regs->regs[MODE_REG] = cfg->mode;  // sink reachable via *any* node
-      }
-  }
-  // (c) 가변 인덱스 struct array: arr[i]->field
-  void dyn_index_write(Config* cfg, HwRegs** arr, int i) {
-      arr[i]->regs[CTRL_REG] = cfg->enable;
-  }
-  ```
-- **Expected gap:** 
-  - (a) `taint_tracker.py::_resolve_alias` (또는 alias 맵 생성부, 아마 `ts_parser.py::extract_all_assignments` 내 pointer alias 판별)는 `conditional_expression`을 RHS로 받는 대입을 단일 target으로 단순화하지 못해 `p`의 alias 후보 집합을 `{ra, rb}` 대신 공집합 또는 하나만 선택할 것.
-  - (b) 반복자 변수 `n`의 alias는 `head` / `n->next`이고, sink expr `n->regs->regs[...]`의 base가 고정되지 않는다. 현재 sink 매칭은 `regs->regs[...]` 문자열/AST 일치에 의존하므로 `n->regs->regs[...]`를 별도 패턴으로 취급해 놓칠 것.
-  - (c) `arr[i]`의 `i`가 상수가 아닐 때 `struct_array_indexing` 로직(이미 `init_channels → array_struct_write`로 한 번 통과)이 인덱스를 요구 매칭하는지 확인 필요. 아마 상수 인덱스만 매칭한다.
-- **Implementation hint:**
-  - `ts_parser.py`의 alias 추출에 `conditional_expression` RHS 전개 추가 (양쪽 분기를 모두 alias 후보로 등록)
-  - sink 인식기에 "base가 field chain인 경우" (`n->regs->regs[...]`) 재귀 하강 추가
-  - 인덱스 wildcard 모드: `arr[*].field` 매칭 허용 옵션
+```yaml
+  # ══════════════════════════════════════════════════════
+  # P1: Deep call chain + mutual recursion
+  # ══════════════════════════════════════════════════════
 
----
+  # 5-hop param propagation: dcfg->frequency → dc_stage1..5 → DC_TIMING_REG
+  # 검증 포인트: _trace_backward가 5단 재귀를 잘 탄다 (steps에 dc_stage5 포함).
+  - name: "deep chain 5-hop param propagation"
+    source: "dcfg->frequency"
+    sink: "DC_TIMING_REG"
+    expected_function: "dc_stage5"
+    requires: deep_call_chain
+    min_depth: 5
+    difficulty: hard
 
-### P3 — Virtual dispatch & member function pointer (C++)
-- **Why it matters:** 프로젝트가 `cpp-analyzer`인데 fixture는 전부 C. `virtual` 메서드, ops-table 기반 디스패치는 C++/드라이버 코드의 핵심 패턴이고, 현재 함수 포인터 추적이 C 스타일 struct field fnptr까지만 커버. vtable/템플릿/멤버 함수 포인터는 전혀 없다.
-- **Fixture sketch** (`cpp_dispatch.cpp` + `.h`):
-  ```cpp
-  struct Writer {
-      virtual void write(HwRegs* r, uint32_t v) = 0;
-  };
-  struct TimingWriter : Writer {
-      void write(HwRegs* r, uint32_t v) override { r->regs[TIMING_REG] = v; }
-  };
-  void vcall_write(Config* cfg, HwRegs* regs, Writer* w) {
-      w->write(regs, cfg->frequency);   // virtual dispatch → TimingWriter::write
-  }
-  // 멤버 함수 포인터
-  using MemFn = void (Writer::*)(HwRegs*, uint32_t);
-  void memfn_write(Config* cfg, HwRegs* regs, Writer* w, MemFn fn) {
-      (w->*fn)(regs, cfg->mode);
-  }
-  // 템플릿 instantiation
-  template<typename T> void tmpl_write(T* w, HwRegs* r, uint32_t v) { w->write(r, v); }
-  ```
-- **Expected gap:** `taint_tracker.py` 및 `ts_parser.py`의 call-resolution은 libclang의 `CXXMethodDecl`/`is_virtual`을 활용하지 않는 것으로 보인다(현재 함수 포인터 추적 코드는 `_resolve_fnptr_target` 계열로 C 식별자 매칭 기반). `w->write(...)`는 기호 해석 시 추상 시그니처로 남아 callee 후보 집합을 만들지 못해 taint가 진입 함수에서 끊긴다. 멤버 함수 포인터 `(w->*fn)(...)`는 AST 노드 타입(`pointer_to_member_expression`)이 완전히 다른 경로라 추출 로직에 없을 가능성 높음.
-- **Implementation hint:**
-  - `ts_parser.py`에 C++ 모드 감지(`.cpp/.cc/.hpp`) + `field_expression` 기반 메서드 호출을 "class + method name"으로 정규화
-  - 심볼 DB에 `class`/`override` 관계 (간단한 상속 그래프)를 추가하고, 가상 호출 시 모든 override 구현을 taint callee 후보로 확장
-  - 멤버 함수 포인터는 별도 AST 매처 (`pointer_to_member_expression` in tree-sitter-cpp)
+  # Mutual recursion: dcfg->mode → recurse_odd/even → DC_MODE_REG
+  - name: "mutual recursion odd/even"
+    source: "dcfg->mode"
+    sink: "DC_MODE_REG"
+    expected_function: "recurse_odd"
+    requires: mutual_recursion
+    min_depth: 3
+    difficulty: hard
 
----
+  # ══════════════════════════════════════════════════════
+  # P2: Conditional alias, linked-list, dynamic index
+  # ══════════════════════════════════════════════════════
 
-### P4 — Conditional compilation (#ifdef) branching sinks
-- **Why it matters:** BSP/RTOS 코드는 동일 함수가 `#ifdef CONFIG_X`로 완전히 다른 레지스터에 쓴다. 벤치마크가 한 세트의 매크로 정의만 가정하면 "정의가 다른 빌드 타깃에서만 나타나는 sink"를 놓친다. 실제 취약점 추적에서 매우 흔한 누락 지점.
-- **Fixture sketch:**
-  ```c
-  void ifdef_write(Config* cfg, HwRegs* regs) {
-  #ifdef USE_FAST_PATH
-      regs->regs[TIMING_REG] = cfg->frequency << 1;
-  #else
-      regs->regs[TIMING_REG] = cfg->frequency;
-  #endif
-  }
-  // 헤더-only 정의 (static inline in .h)
-  // hdr_only.h:
-  //   static inline void hdr_write(HwRegs* r, uint32_t v) { r->regs[MODE_REG] = v; }
-  ```
-  expected.yaml 엔트리는 두 분기 모두 path로 인정(또는 `build_config: [A, B]` 두 variant로 테스트).
-- **Expected gap:** libclang 파서가 단일 `-D` 정의로 한 분기만 AST에 포함. 다른 분기는 아예 파싱되지 않아 심볼화/taint 추적 대상이 되지 않는다. `cpp_analyzer/analysis/ts_parser.py` 또는 build-config 로더(`configs.csv` 관련 코드)에서 "두 분기 모두 별도로 파싱해 union 심볼 테이블을 만드는" 로직 부재로 추정.
-- **Implementation hint:**
-  - tree-sitter는 전처리기에 영향받지 않고 전 분기를 파싱 → `ts_parser.py` 주도로 `preproc_ifdef` 노드 양쪽 분기의 statement를 모두 수집하고, 각 sink에 "guarded by #ifdef X" 메타를 부착
-  - libclang 경로는 다중 빌드 컨피그(`-D` 조합별) 재파싱 후 심볼 union
+  # p = sel ? ra : rb;  p->regs[...] = acfg->frequency
+  - name: "conditional alias ternary pointer"
+    source: "acfg->frequency"
+    sink: "AA_TIMING_REG"
+    expected_function: "cond_alias_write"
+    requires: conditional_alias
+    min_depth: 2
+    difficulty: hard
 
----
+  # for (n=head; n; n=n->next) n->regs->regs[...] = acfg->mode
+  - name: "linked list walk taint"
+    source: "acfg->mode"
+    sink: "AA_MODE_REG"
+    expected_function: "list_walk_write"
+    requires: linked_list_tracking
+    min_depth: 2
+    difficulty: hard
 
-### P5 — Multi-registered callbacks & bitfield / flexible array sinks
-- **Why it matters:** 콜백 등록이 한 번만 일어난다고 가정하는 것은 실제 이벤트 시스템에서 틀린다(`register_cb(A); ...; register_cb(B);`). 또한 비트필드(`struct { uint32_t x:4; }`)와 flexible array member(`struct { int n; uint32_t data[]; }`)는 임베디드/네트워크 스택의 표준 패턴인데 현재 fixture에 전무.
-- **Fixture sketch:**
-  ```c
-  // (a) 멀티 콜백
-  static cb_t g_cbs[4]; static int g_n;
-  void register_cb(cb_t f) { g_cbs[g_n++] = f; }
-  void fire_cbs(HwRegs* r, uint32_t v) { for (int i=0;i<g_n;i++) g_cbs[i](r, v); }
-  static void cb_timing(HwRegs* r, uint32_t v) { r->regs[TIMING_REG] = v; }
-  static void cb_mode(HwRegs* r, uint32_t v)   { r->regs[MODE_REG]   = v; }
-  void multi_cb_init(void)                  { register_cb(cb_timing); register_cb(cb_mode); }
-  void multi_cb_fire(Config* cfg, HwRegs* r){ fire_cbs(r, cfg->frequency); } // → both regs
-  // (b) 비트필드
-  typedef struct { uint32_t a:8, b:16, c:8; } Packed;
-  void bitfield_member_write(Config* cfg, HwRegs* regs) {
-      Packed p = {0}; p.b = cfg->frequency; regs->regs[TIMING_REG] = *(uint32_t*)&p;
-  }
-  // (c) flexible array
-  typedef struct { int n; uint32_t data[]; } Msg;
-  void fam_write(Config* cfg, Msg* m, HwRegs* regs) {
-      m->data[0] = cfg->mode; regs->regs[MODE_REG] = m->data[0];
-  }
-  ```
-- **Expected gap:**
-  - (a) `taint_tracker.py`의 callback tracking(Gap A4로 추가된 `_resolve_global_fnptr_callees`류)는 **마지막** 등록값만 찾거나, 단일 대입만 추적 가능. 배열 인덱스로 누적 등록되는 패턴은 `g_cbs[g_n++] = ...` assignment의 LHS를 "배열 요소"로 단순화하지 못해 둘 다 callee 후보에 넣지 못한다.
-  - (b) 비트필드는 `ts_parser.py::_parse_field_declaration`에서 `bitfield_clause` 노드를 무시하면 필드 타입/크기가 어긋나고, `*(uint32_t*)&p` 같은 type-punning sink 인식이 없어 taint가 끊긴다.
-  - (c) flexible array `m->data[i]`는 `subscript_expression` 기반 alias 처리인데 현재 상수 인덱스 분기만 확인 필요.
-- **Implementation hint:**
-  - callback 추적에 "array-of-function-pointers" 전용 분기 추가: 배열 요소 LHS가 나올 때마다 callee 집합에 누적
-  - `ts_parser.py`에 `bitfield_clause` 파싱 및 `field_identifier`의 비트 폭 메타 기록
-  - type-punning (`*(T*)&x`)는 cast_tracking 연장선상에서 alias 선언 처리
+  # arr[i]->regs[...] = acfg->enable  (non-constant index)
+  - name: "dynamic array index sink"
+    source: "acfg->enable"
+    sink: "AA_CTRL_REG"
+    expected_function: "dyn_index_write"
+    requires: dynamic_index
+    min_depth: 2
+    difficulty: medium
 
----
+  # ══════════════════════════════════════════════════════
+  # P3: C++ virtual dispatch  (member-fnptr은 xfail이라 제외)
+  # ══════════════════════════════════════════════════════
 
-## 우선순위 요약
+  - name: "cpp virtual dispatch timing"
+    source: "ccfg->frequency"
+    sink: "CPP_TIMING_REG"
+    requires: cpp_virtual_dispatch
+    min_depth: 2
+    difficulty: hard
 
-| # | Pattern | 예상 영향 | 난이도 |
-|---|---------|----------|--------|
-| P1 | Deep chain (4~6 hop) + 상호 재귀 | taint_tracker 재귀·캐싱 강건성 확보 | 중 |
-| P2 | 조건부 alias / 리스트 순회 / dynamic index | alias 모델 현실화 | 중~상 |
-| P3 | C++ 가상 디스패치 / 템플릿 / 멤버 fnptr | 프로젝트 이름값(C++) 회복 | 상 |
-| P4 | #ifdef 분기 sink + 헤더-only 정의 | 빌드 컨피그 내성 | 상 |
-| P5 | 멀티 콜백 / 비트필드 / flexible array | 커버리지 다양성 | 중 |
+  - name: "cpp virtual dispatch mode"
+    source: "ccfg->frequency"
+    sink: "CPP_MODE_REG"
+    requires: cpp_virtual_dispatch
+    min_depth: 2
+    difficulty: hard
 
-**구현 권고 순서:** P1 → P2 → P5 → P4 → P3
-(P3 C++는 파서 레이어 확장 비용이 커서 후순위, P1/P2는 기존 taint 엔진 튜닝으로 ROI가 높음)
+  # ══════════════════════════════════════════════════════
+  # P4: #ifdef-guarded sinks (tree-sitter가 양쪽 분기 보여야 함)
+  # ══════════════════════════════════════════════════════
 
-## 신규 fixture 배치 제안
+  - name: "ifdef fast-path branch"
+    source: "icfg->frequency"
+    sink: "IF_FAST_REG"
+    expected_function: "ifdef_write"
+    requires: ifdef_both_branches
+    min_depth: 2
+    difficulty: hard
 
-현재 `hw_model.c` 하나가 비대(375줄)하므로 기능 그룹별 분리 권장:
+  - name: "ifdef else branch"
+    source: "icfg->frequency"
+    sink: "IF_TIMING_REG"
+    expected_function: "ifdef_write"
+    requires: ifdef_both_branches
+    min_depth: 2
+    difficulty: hard
+
+  - name: "ifdef nested mode variant A"
+    source: "icfg->mode"
+    sink: "IF_MODE_REG"
+    expected_function: "ifdef_nested_write"
+    requires: ifdef_both_branches
+    min_depth: 2
+    difficulty: medium
+
+  # ══════════════════════════════════════════════════════
+  # P5: Multi-callback, bitfield, FAM
+  # ══════════════════════════════════════════════════════
+
+  # p5_register_cb(cb_timing) + p5_register_cb(cb_mode)
+  # p5_fire_cbs가 배열을 순회하며 각 cb로 전파 → 두 레지스터
+  - name: "multi-cb array dispatch timing"
+    source: "pcfg->frequency"
+    sink: "P5_TIMING_REG"
+    expected_function: "cb_timing"
+    requires: multi_callback_array
+    min_depth: 3
+    difficulty: hard
+
+  - name: "multi-cb array dispatch mode"
+    source: "pcfg->frequency"
+    sink: "P5_MODE_REG"
+    expected_function: "cb_mode"
+    requires: multi_callback_array
+    min_depth: 3
+    difficulty: hard
+
+  # pk.b = pcfg->frequency;  regs[...] = *(uint32_t*)&pk
+  - name: "bitfield type-pun sink"
+    source: "pcfg->frequency"
+    sink: "P5_TIMING_REG"
+    expected_function: "p5_bitfield_write"
+    requires: bitfield_typepun
+    min_depth: 2
+    difficulty: hard
+
+  # m->data[0] = pcfg->mode;  regs[...] = m->data[0]
+  - name: "flexible array member sink"
+    source: "pcfg->mode"
+    sink: "P5_MODE_REG"
+    expected_function: "p5_fam_write"
+    requires: flexible_array_member
+    min_depth: 2
+    difficulty: hard
 ```
-tests/fixtures/dataflow/
-├── hw_model.c              # 기존 유지 (레거시)
-├── deep_chain.c            # P1
-├── aliasing_advanced.c     # P2
-├── cpp_dispatch.cpp        # P3 (새로 C++)
-├── ifdef_variants.c        # P4
-├── callbacks_multi.c       # P5
-└── expected.yaml           # 새 섹션으로 그룹 추가
-```
+
+**요약:**
+- 추가 엔트리: 14건 (xfail 1건, mutual-recursion hard 1건 포함 구성)
+- 난이도 가중치 추가: easy=0, medium=2×1=2, hard=3×12=36 → 합 **+38**
+- 현재 max_score 97 → 신규 max_score ≈ **135**
+- fixture별 `requires` 라벨을 새로 도입(`deep_call_chain`, `mutual_recursion`, `conditional_alias`, `linked_list_tracking`, `dynamic_index`, `cpp_virtual_dispatch`, `ifdef_both_branches`, `multi_callback_array`, `bitfield_typepun`, `flexible_array_member`). 이후 gap 집계에서 카테고리 해상도가 높아진다.
+
+### A.2 부작용 검토
+- `TestBenchmark::test_benchmark_score`는 `_find_path` 하나로 모든 케이스를 소화하므로 추가 코드 변경 불필요.
+- 기존 엔트리의 `source`/`sink`/`expected_function`은 **건드리지 않는다** — 100% 점수 유지.
+- `sink`는 substring 매칭이라 `"DC_TIMING_REG"` / `"AA_TIMING_REG"` / `"CPP_TIMING_REG"` 등이 hw_model.c의 `TIMING_REG`과 충돌할 가능성이 있다. 그러나 `_find_path`는 처음 매칭되는 path를 반환하는 구조라 오탐이 발생해도 같은 source 문자열(`dcfg->`/`acfg->`/`ccfg->`/`icfg->`/`pcfg->`)로 1차 필터링되므로 fixture 간 교차 오매칭은 생기지 않는다.
+- 단, P1 케이스의 `expected_function: "dc_stage5"`는 taint_tracker가 5-hop을 완주했을 때만 만족된다. 현재 `TestDeepChain::test_five_hop_param_chain`이 PASS이므로 스코어러에서도 PASS 예상.
+- **리스크 포인트:** `bitfield type-pun`과 `flexible array member` 는 pytest 클래스에서 통과 중이지만, `_find_path`는 `p.sink.function == expected_function`을 요구하지 않고 steps 포함 여부만 본다. 현재 TestMultiCallback은 `p.sink.function == "p5_bitfield_write"`를 엄격히 요구하는데, expected.yaml 스코어러는 이보다 느슨하므로 **스코어러가 PASS인데 pytest는 FAIL**하는 비대칭이 이미 감내 범위다 (측정이 더 관대할 뿐).
+
+### A.3 구현 지시 (implementer용)
+1. 위 YAML 블록을 `tests/fixtures/dataflow/expected.yaml` **맨 끝** (scoring 주석 직전)에 append.
+2. `pytest tests/test_dataflow.py::TestBenchmark -v` 재실행 → `_benchmark_report.json`의 `max_score`가 증가하고 신규 14건 모두 PASS 인지 확인.
+3. regression 체크: 기존 97점은 그대로, 신규 14건이 모두 PASS면 **135/135 (100%)** 또는 일부 MISS 면 카테고리 해상도가 드러나 다음 reasoner 사이클이 그것을 잡음.
+
+---
+
+## B) 다음 진화 프런티어 (P1~P5 이후 여전히 놓치는 것)
+
+선정 기준: (a) 실무 임베디드/커널 C 코드에서 **빈도 높음**, (b) 현재 `taint_tracker.py`의 어떤 분기도 잡지 못함, (c) fixture가 짧아야 벤치마크에 빨리 편입 가능. 3개 제안.
+
+### B.1 Bulk-copy / struct memcpy taint (`memcpy(dst, &cfg, sizeof)`)
+
+- **Fixture sketch (≤15줄):**
+  ```c
+  typedef struct { int freq; int mode; } McConfig;
+  typedef struct { uint32_t regs[16]; } McHwRegs;
+  void memcpy_taint(McConfig* cfg, McHwRegs* regs) {
+      McConfig local;
+      memcpy(&local, cfg, sizeof(*cfg));   // taint 전체 blob으로 복사
+      regs->regs[0] = local.freq;
+  }
+  ```
+- **Expected gap:** `memcpy`/`memmove`/`__builtin_memcpy` 호출의 2nd 인자(source blob)에 있는 필드가 1st 인자(dst)의 필드로 전파되지 않음 — 현재 `_find_reaching_defs`는 assignment 만 본다.
+- **Implementation hint:** `ts_parser.extract_all_assignments`에 `call_expression` 중 callee name이 `memcpy|memmove|strcpy` 인 것을 *pseudo-assignment* (`lhs=*dst`, `rhs=*src`)로 등록; `taint_tracker._trace_backward`는 struct-copy alias 로직을 재사용해 필드-대-필드 전파.
+- **Tier:** 1 + 3. DB 스키마 불변.
+
+### B.2 `container_of` / `offsetof`-기반 embedded struct 역참조 (커널 패턴)
+
+- **Fixture sketch:**
+  ```c
+  struct Inner { int freq; };
+  struct Outer { int pad; struct Inner in; };
+  #define container_of(ptr, type, member) \
+      ((type*)((char*)(ptr) - offsetof(type, member)))
+  void co_write(struct Inner* i, HwRegs* regs) {
+      struct Outer* o = container_of(i, struct Outer, in);
+      regs->regs[0] = o->in.freq;  // 같은 메모리를 outer-member 로 재접근
+  }
+  ```
+- **Expected gap:** `container_of` 매크로 확장 후 `(char*)ptr - offsetof` 산술이 alias로 잡히지 않음. 현재 `C3 pointer arithmetic`은 배열 index 오프셋만 다루고 struct-embedded 의미를 모른다.
+- **Implementation hint:** macro expansion에서 `container_of(X, T, M)` 패턴을 탐지해 `result` 와 `X` 를 structural-alias 로 등록 (offset 은 무시하고 same-storage 로 처리). `taint_tracker._resolve_alias` 에 새 테이블 `container_of_alias` 질의 추가.
+- **Tier:** 1 + 2 + 3. 신규 mini-table 하나 필요.
+
+### B.3 `goto`-based error unwind의 deferred register write (register-set-at-exit)
+
+- **Fixture sketch:**
+  ```c
+  void unwind_write(Config* cfg, HwRegs* regs) {
+      uint32_t v = 0;
+      if (!cfg) goto out;
+      v = cfg->freq;
+  out:
+      regs->regs[TIMING_REG] = v;  // goto를 거쳐야만 도달하는 sink
+  }
+  ```
+- **Expected gap:** `_find_reaching_defs`가 goto label을 넘는 basic-block 합류를 따라가지 못한다. `v=0` 초기화와 `v=cfg->freq` 두 reaching def 중 후자가 드롭될 가능성 높음 (순차 스캔만 한다면).
+- **Implementation hint:** tree-sitter AST에서 `labeled_statement` 와 `goto_statement` 를 basic-block 경계로 인식하고, 각 label에 도달하는 모든 선행 assignment 를 reaching-def 후보로 union. 재귀 없이 linear pass 로 가능.
+- **Tier:** 1 + 3. DB 스키마 불변. LOC 예상 ~40.
+
+### 참고로 기각/후순위
+- **setjmp/longjmp, va_list:** 실 빈도 낮음 + 현재 엔진이 회귀 위험 큼. Skip for now.
+- **Thread-local / atomic sinks:** sink-pattern 추가만으로 되지만 fixture 공급이 부담. sink_patterns 확장으로 노코드 진화 가능하므로 reasoner보다 운영 튜닝 레이어.
+- **C++ lambda / std::function:** 중요하나 P3 member-fnptr xfail 과 같은 과제라 `Itanium vtable aware` 리졸버 도입 후 묶어서 한 번에.
+- **DMA descriptor array:** B.1 (bulk memcpy) + 기존 struct-array indexing 조합으로 상당 부분 자연 해소 예상. 별도 트랙으로는 나중에.
+
+---
+
+## 권고 구현 순서
+
+1. **(최우선) A. expected.yaml 확장** — 구현이 아니라 측정 확장. `developer` 1회, <30분. 이게 먼저여야 다음 사이클의 benchmarker가 B.1~B.3 를 객관적으로 평가할 수 있다.
+2. **B.1 Bulk memcpy** — 3개 중 LOC 최소, 실무 빈도 최고, DB 스키마 변경 없음. 다음 evolution 사이클의 Gap 1.
+3. **B.3 goto/label reaching-def** — 독립 변경이라 merge 충돌 위험 낮음. B.1 후 바로 투입 가능.
+4. **B.2 container_of** — mini-table 추가로 Tier 2 필요. 앞 두 개가 안정화된 뒤 착수.
 
 ## 비권장 사항
-
-- `hw_model.c`에 P1~P5를 전부 밀어넣는 것 — 이미 포화 상태. 파일 분할 동반 필수.
-- Scale (100+ 파일) 테스트를 벤치마크에 포함 — 벤치 실행 시간 폭증. 별도 `tests/scale/`로 분리하는 편이 낫다.
-- C++ 패턴(P3)을 tree-sitter만으로 해결 시도 — 가상 디스패치 resolution은 최소한의 클래스 상속 그래프(libclang의 `get_children` / `CXCursor_CXXBaseSpecifier` 활용)가 필요.
+- 현재 100% 상태에서 엔진 리팩토링 금지 — regression 리스크. P1~P5 로직이 `_trace_backward`·`_find_reaching_defs`를 거미줄처럼 확장했기에, 구조 정리는 B.1~B.3 세 건이 축적된 뒤 한 사이클을 "정리 전용"으로 배정하는 편이 안전.
+- `TestCppDispatch::test_member_fn_ptr` 을 expected.yaml에 추가하지 말 것 — xfail 이 의도적이며, 스코어러에 넣으면 영구 MISS 로 노이즈만 증가.

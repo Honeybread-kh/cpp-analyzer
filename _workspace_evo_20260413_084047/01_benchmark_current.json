@@ -2,7 +2,7 @@
   "score": 97,
   "max_score": 97,
   "pct": 100.0,
-  "total_paths_found": 77,
+  "total_paths_found": 59,
   "results": [
     {
       "name": "direct threshold",
@@ -282,8 +282,8 @@
     }
   ],
   "gaps": [],
-  "timestamp": "2026-04-12T23:41:29.218769Z",
-  "commit": "90122239768a1338561d8b66335f96b5004d5dc9",
+  "timestamp": "2026-04-12T23:18:04.180607Z",
+  "commit": "7a92e6641169052ddeea1442ed8b3c3ec3e44686",
   "branch": "main",
   "by_difficulty": {
     "easy": {
@@ -404,11 +404,5 @@
       "pass": 2,
       "total": 2
     }
-  },
-  "pytest_summary": {
-    "passed": 60,
-    "xfailed": 1,
-    "failed": 0,
-    "collected": 61
   }
 }

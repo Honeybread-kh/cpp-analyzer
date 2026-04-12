@@ -633,6 +633,40 @@ def extract_all_assignments(root: Node) -> list[dict]:
                 "function": func_name,
             })
 
+        # 3. B1: memcpy/memmove/__builtin_memcpy as pseudo-assignment.
+        #    memcpy(dst, src, n) taints dst with src blob; subsequent field
+        #    reads off dst resolve back to src via the alias map.
+        _BULK_COPY = {"memcpy", "memmove", "__builtin_memcpy", "__builtin_memmove"}
+        for call in walk_type(body, "call_expression"):
+            callee = call.child_by_field_name("function")
+            args_node = call.child_by_field_name("arguments")
+            if callee is None or args_node is None:
+                continue
+            callee_name = node_text(callee).strip()
+            if callee_name not in _BULK_COPY:
+                continue
+            arg_nodes = [c for c in args_node.named_children]
+            if len(arg_nodes) < 2:
+                continue
+            dst_raw = node_text(arg_nodes[0]).strip()
+            src_raw = node_text(arg_nodes[1]).strip()
+            dst = dst_raw.lstrip("&*").strip()
+            src = src_raw.lstrip("&*").strip()
+            if not re.fullmatch(r'[A-Za-z_]\w*', dst):
+                continue
+            if not re.fullmatch(r'[A-Za-z_]\w*', src):
+                continue
+            results.append({
+                "lhs": dst,
+                "rhs": src,
+                "rhs_vars": [src],
+                "rhs_call": None,
+                "operator": "=",
+                "transform": "memcpy",
+                "line": call.start_point[0] + 1,
+                "function": func_name,
+            })
+
     results.sort(key=lambda x: (x["function"], x["line"]))
     return results
 

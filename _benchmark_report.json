@@ -1,8 +1,8 @@
 {
-  "score": 97,
-  "max_score": 97,
+  "score": 143,
+  "max_score": 143,
   "pct": 100.0,
-  "total_paths_found": 77,
+  "total_paths_found": 79,
   "results": [
     {
       "name": "direct threshold",
@@ -279,6 +279,102 @@
       "difficulty": "hard",
       "status": "PASS",
       "requires": "struct_array_indexing"
+    },
+    {
+      "name": "deep chain 5-hop param propagation",
+      "difficulty": "hard",
+      "status": "PASS",
+      "requires": "deep_call_chain"
+    },
+    {
+      "name": "mutual recursion odd/even",
+      "difficulty": "hard",
+      "status": "PASS",
+      "requires": "mutual_recursion"
+    },
+    {
+      "name": "conditional alias ternary pointer",
+      "difficulty": "hard",
+      "status": "PASS",
+      "requires": "conditional_alias"
+    },
+    {
+      "name": "linked list walk taint",
+      "difficulty": "hard",
+      "status": "PASS",
+      "requires": "linked_list_tracking"
+    },
+    {
+      "name": "dynamic array index sink",
+      "difficulty": "medium",
+      "status": "PASS",
+      "requires": "dynamic_index"
+    },
+    {
+      "name": "cpp virtual dispatch timing",
+      "difficulty": "hard",
+      "status": "PASS",
+      "requires": "cpp_virtual_dispatch"
+    },
+    {
+      "name": "cpp virtual dispatch mode",
+      "difficulty": "hard",
+      "status": "PASS",
+      "requires": "cpp_virtual_dispatch"
+    },
+    {
+      "name": "ifdef fast-path branch",
+      "difficulty": "hard",
+      "status": "PASS",
+      "requires": "ifdef_both_branches"
+    },
+    {
+      "name": "ifdef else branch",
+      "difficulty": "hard",
+      "status": "PASS",
+      "requires": "ifdef_both_branches"
+    },
+    {
+      "name": "ifdef nested mode variant A",
+      "difficulty": "medium",
+      "status": "PASS",
+      "requires": "ifdef_both_branches"
+    },
+    {
+      "name": "multi-cb array dispatch timing",
+      "difficulty": "hard",
+      "status": "PASS",
+      "requires": "multi_callback_array"
+    },
+    {
+      "name": "multi-cb array dispatch mode",
+      "difficulty": "hard",
+      "status": "PASS",
+      "requires": "multi_callback_array"
+    },
+    {
+      "name": "bitfield type-pun sink",
+      "difficulty": "hard",
+      "status": "PASS",
+      "requires": "bitfield_typepun"
+    },
+    {
+      "name": "flexible array member sink",
+      "difficulty": "hard",
+      "status": "PASS",
+      "requires": "flexible_array_member"
+    },
+    {
+      "name": "memcpy bulk copy frequency",
+      "difficulty": "hard",
+      "status": "PASS",
+      "requires": "memcpy_bulk_copy"
+    },
+    {
+      "name": "memcpy bulk copy mode",
+      "difficulty": "hard",
+      "status": "PASS",
+      "requires": "memcpy_bulk_copy"
     }
   ],
   "gaps": []

@@ -449,6 +449,28 @@ class TestMultiCallback:
         pytest.fail("Flexible-array-member sink path not traced")
 
 
+class TestMemcpyBulk:
+    """B1: memcpy(&local, cfg, sizeof) blob copy, then field read off local."""
+
+    def test_memcpy_frequency(self, analysis_db):
+        _, _, paths = analysis_db
+        for p in paths:
+            if ("mcfg->frequency" in p.source.variable
+                    and "MC_TIMING_REG" in p.sink.variable
+                    and p.sink.function == "memcpy_bulk_write"):
+                return
+        pytest.fail("memcpy bulk-copy frequency path not traced")
+
+    def test_memcpy_mode(self, analysis_db):
+        _, _, paths = analysis_db
+        for p in paths:
+            if ("mcfg->mode" in p.source.variable
+                    and "MC_MODE_REG" in p.sink.variable
+                    and p.sink.function == "memcpy_bulk_write"):
+                return
+        pytest.fail("memcpy bulk-copy mode path not traced")
+
+
 class TestAliasingAdvanced:
     """P2: conditional alias, linked-list walk, dynamic-index sinks."""
 
