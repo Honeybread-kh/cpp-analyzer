@@ -373,6 +373,20 @@ paths:
     difficulty: hard
 
   # ══════════════════════════════════════════════════════
+  # Callback via global function pointer (Gap A4)
+  # ══════════════════════════════════════════════════════
+
+  # 패턴: g_event_cb = on_event_write (register_event_cb)
+  #        g_event_cb(regs, cfg->enable) (trigger_event) → CTRL_REG
+  - name: "callback via global fnptr"
+    source: "cfg->enable"
+    sink: "regs->regs[CTRL_REG]"
+    expected_function: "trigger_event"
+    requires: callback_tracking
+    min_depth: 3
+    difficulty: hard
+
+  # ══════════════════════════════════════════════════════
   # Type casting passthrough (Gap C2)
   # ══════════════════════════════════════════════════════
 

@@ -251,17 +251,24 @@ class TaintTracker:
         # e.g. in fnptr_dispatch: writer = write_timing_fn
         #   → ("hw_model.c", "fnptr_dispatch", "writer") → "write_timing_fn"
         self._fnptr_aliases: dict[tuple[str, str, str], str] = {}
+        # file-scope / global fnptr aliases: any assignment (in any function)
+        # whose LHS is a non-local identifier (no dot/arrow/bracket) and whose
+        # RHS is a known function name. Keyed by callee_var only.
+        self._fnptr_globals: dict[str, str] = {}
         for rp, assignments in self._file_assignments.items():
             for a in assignments:
                 if not a["function"]:
                     continue
-                # RHS must be exactly one bare identifier that names a known function
                 if a["rhs_call"]:
                     continue
                 rhs = (a["rhs"] or "").strip()
                 if rhs in self._func_to_file:
                     key = (rp, a["function"], a["lhs"])
                     self._fnptr_aliases[key] = rhs
+                    lhs = a["lhs"]
+                    # plain identifier (no member / index access) → file-scope alias
+                    if not any(c in lhs for c in ".->["):
+                        self._fnptr_globals[lhs] = rhs
 
     def _scan_sinks(self) -> list[dict]:
         """Find all assignments whose LHS matches a sink pattern."""
@@ -611,6 +618,9 @@ class TaintTracker:
                     # lookup (file, caller_func, callee_var) → target_func
                     key = (file_path, call["function"], call["callee_name"])
                     if self._fnptr_aliases.get(key) == func_name:
+                        indirect = True
+                    # fallback: file-scope / global fnptr assigned elsewhere
+                    elif self._fnptr_globals.get(call["callee_name"]) == func_name:
                         indirect = True
                 if not (direct or indirect):
                     continue

@@ -323,6 +323,22 @@ void fnptr_struct_dispatch(Config* cfg, HwRegs* regs) {
     ops.mode_fn(regs, cfg->mode);
 }
 
+/* ── callback via global function pointer (Gap A4) ── */
+
+static void on_event_write(HwRegs* regs, uint32_t val) {
+    regs->regs[CTRL_REG] = val;
+}
+
+static reg_writer_t g_event_cb;
+
+void register_event_cb(void) {
+    g_event_cb = on_event_write;
+}
+
+void trigger_event(Config* cfg, HwRegs* regs) {
+    g_event_cb(regs, cfg->enable);
+}
+
 /* ── dependency: multiple config fields → same reg ── */
 
 void dependent_write(Config* cfg, HwRegs* regs) {
