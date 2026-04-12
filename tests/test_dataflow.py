@@ -49,7 +49,8 @@ def analysis_db():
         {"name": "ext_config_field", "regex": r"ecfg->(\w+)"},
     ]
     sink_patterns = [
-        {"name": "reg_array", "regex": r"(?:regs|r|hw)->regs\["},
+        {"name": "reg_array", "regex": r"\w+->regs\["},
+        {"name": "reg_array_idx", "regex": r"\w+\[\w+\]->regs\["},
         {"name": "fw_field", "regex": r"fw->(\w+)\s*="},
         {"name": "REG_WRITE", "regex": r"REG_WRITE\s*\("},
         {"name": "volatile_mmio", "regex": r"\*\s*\(\s*volatile"},
@@ -346,6 +347,37 @@ class TestDeepChain:
             if "recurse_odd" in funcs or "recurse_even" in funcs:
                 return
         pytest.fail("Mutual recursion taint path not found")
+
+
+class TestAliasingAdvanced:
+    """P2: conditional alias, linked-list walk, dynamic-index sinks."""
+
+    def test_cond_alias(self, analysis_db):
+        """p = sel ? ra : rb; p->regs[...] = acfg->frequency"""
+        _, _, paths = analysis_db
+        for p in paths:
+            if "acfg->frequency" in p.source.variable and "AA_TIMING_REG" in p.sink.variable:
+                if p.sink.function == "cond_alias_write":
+                    return
+        pytest.fail("Conditional alias path not traced")
+
+    def test_linked_list_walk(self, analysis_db):
+        """for (n = head; n; n = n->next) n->regs->regs[...] = acfg->mode"""
+        _, _, paths = analysis_db
+        for p in paths:
+            if "acfg->mode" in p.source.variable and "AA_MODE_REG" in p.sink.variable:
+                if p.sink.function == "list_walk_write":
+                    return
+        pytest.fail("Linked-list traversal sink not traced")
+
+    def test_dynamic_index(self, analysis_db):
+        """arr[i]->regs[...] = acfg->enable"""
+        _, _, paths = analysis_db
+        for p in paths:
+            if "acfg->enable" in p.source.variable and "AA_CTRL_REG" in p.sink.variable:
+                if p.sink.function == "dyn_index_write":
+                    return
+        pytest.fail("Dynamic-index struct-array sink not traced")
 
 
 class TestEnumTracking:
