@@ -492,6 +492,136 @@ paths:
     min_depth: 3
     difficulty: hard
 
+  # ══════════════════════════════════════════════════════
+  # P1: Deep call chain + mutual recursion
+  # ══════════════════════════════════════════════════════
+
+  - name: "deep chain 5-hop param propagation"
+    source: "dcfg->frequency"
+    sink: "DC_TIMING_REG"
+    expected_function: "dc_stage5"
+    requires: deep_call_chain
+    min_depth: 5
+    difficulty: hard
+
+  - name: "mutual recursion odd/even"
+    source: "dcfg->mode"
+    sink: "DC_MODE_REG"
+    expected_function: "recurse_odd"
+    requires: mutual_recursion
+    min_depth: 3
+    difficulty: hard
+
+  # ══════════════════════════════════════════════════════
+  # P2: Conditional alias, linked-list, dynamic index
+  # ══════════════════════════════════════════════════════
+
+  - name: "conditional alias ternary pointer"
+    source: "acfg->frequency"
+    sink: "AA_TIMING_REG"
+    expected_function: "cond_alias_write"
+    requires: conditional_alias
+    min_depth: 2
+    difficulty: hard
+
+  - name: "linked list walk taint"
+    source: "acfg->mode"
+    sink: "AA_MODE_REG"
+    expected_function: "list_walk_write"
+    requires: linked_list_tracking
+    min_depth: 2
+    difficulty: hard
+
+  - name: "dynamic array index sink"
+    source: "acfg->enable"
+    sink: "AA_CTRL_REG"
+    expected_function: "dyn_index_write"
+    requires: dynamic_index
+    min_depth: 2
+    difficulty: medium
+
+  # ══════════════════════════════════════════════════════
+  # P3: C++ virtual dispatch
+  # ══════════════════════════════════════════════════════
+
+  - name: "cpp virtual dispatch timing"
+    source: "ccfg->frequency"
+    sink: "CPP_TIMING_REG"
+    requires: cpp_virtual_dispatch
+    min_depth: 2
+    difficulty: hard
+
+  - name: "cpp virtual dispatch mode"
+    source: "ccfg->frequency"
+    sink: "CPP_MODE_REG"
+    requires: cpp_virtual_dispatch
+    min_depth: 2
+    difficulty: hard
+
+  # ══════════════════════════════════════════════════════
+  # P4: #ifdef-guarded sinks
+  # ══════════════════════════════════════════════════════
+
+  - name: "ifdef fast-path branch"
+    source: "icfg->frequency"
+    sink: "IF_FAST_REG"
+    expected_function: "ifdef_write"
+    requires: ifdef_both_branches
+    min_depth: 2
+    difficulty: hard
+
+  - name: "ifdef else branch"
+    source: "icfg->frequency"
+    sink: "IF_TIMING_REG"
+    expected_function: "ifdef_write"
+    requires: ifdef_both_branches
+    min_depth: 2
+    difficulty: hard
+
+  - name: "ifdef nested mode variant A"
+    source: "icfg->mode"
+    sink: "IF_MODE_REG"
+    expected_function: "ifdef_nested_write"
+    requires: ifdef_both_branches
+    min_depth: 2
+    difficulty: medium
+
+  # ══════════════════════════════════════════════════════
+  # P5: Multi-callback, bitfield, FAM
+  # ══════════════════════════════════════════════════════
+
+  - name: "multi-cb array dispatch timing"
+    source: "pcfg->frequency"
+    sink: "P5_TIMING_REG"
+    expected_function: "cb_timing"
+    requires: multi_callback_array
+    min_depth: 3
+    difficulty: hard
+
+  - name: "multi-cb array dispatch mode"
+    source: "pcfg->frequency"
+    sink: "P5_MODE_REG"
+    expected_function: "cb_mode"
+    requires: multi_callback_array
+    min_depth: 3
+    difficulty: hard
+
+  - name: "bitfield type-pun sink"
+    source: "pcfg->frequency"
+    sink: "P5_TIMING_REG"
+    expected_function: "p5_bitfield_write"
+    requires: bitfield_typepun
+    min_depth: 2
+    difficulty: hard
+
+  - name: "flexible array member sink"
+    source: "pcfg->mode"
+    sink: "P5_MODE_REG"
+    expected_function: "p5_fam_write"
+    requires: flexible_array_member
+    min_depth: 2
+    difficulty: hard
+
 # Scoring: each found path = 1 point
 # Difficulty multiplier: easy=1, medium=2, hard=3
 # Total possible score: sum of all (1 * multiplier)
