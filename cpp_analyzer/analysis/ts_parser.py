@@ -984,6 +984,49 @@ def extract_range_constraints(root: Node) -> list[dict]:
             "function": func_name or "",
         })
 
+    # MIN/MAX macro: x = MIN(x, MAX_BOUND)  → max constraint
+    #                x = MAX(x, MIN_BOUND)  → min constraint
+    for assign in walk_type(root, "assignment_expression"):
+        lhs = assign.child_by_field_name("left")
+        rhs = assign.child_by_field_name("right")
+        if lhs is None or rhs is None:
+            continue
+        if rhs.type != "call_expression":
+            continue
+        fn = rhs.child_by_field_name("function")
+        args = rhs.child_by_field_name("arguments")
+        if fn is None or args is None:
+            continue
+        fn_name = node_text(fn).strip()
+        kind = None
+        if fn_name in ("MIN", "min"):
+            kind = "max"  # MIN(x, M) bounds x above by M
+        elif fn_name in ("MAX", "max"):
+            kind = "min"  # MAX(x, M) bounds x below by M
+        else:
+            continue
+        arg_list = [c for c in args.named_children]
+        if len(arg_list) != 2:
+            continue
+        lhs_text = node_text(lhs).strip()
+        a0 = node_text(arg_list[0]).strip()
+        a1 = node_text(arg_list[1]).strip()
+        # one of the args must match the lhs, the other is the bound
+        if a0 == lhs_text:
+            bound = a1
+        elif a1 == lhs_text:
+            bound = a0
+        else:
+            continue
+        func_name = _find_enclosing_function(assign)
+        results.append({
+            "variable": lhs_text,
+            "constraint_type": kind,
+            "bound_value": bound,
+            "line": assign.start_point[0] + 1,
+            "function": func_name or "",
+        })
+
     return results
 
 

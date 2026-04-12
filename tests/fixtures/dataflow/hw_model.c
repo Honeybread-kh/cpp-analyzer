@@ -225,6 +225,36 @@ void clamp_macro_write(Config* cfg, HwRegs* regs) {
     regs->regs[THRESH_REG] = thresh;
 }
 
+/* ── MIN/MAX macro range constraint ─────────────────── */
+
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
+#define MAX(a, b) ((a) > (b) ? (a) : (b))
+
+void minmax_macro_write(Config* cfg, HwRegs* regs) {
+    int freq = cfg->frequency;
+    freq = MIN(freq, MAX_FREQ);
+    freq = MAX(freq, MIN_FREQ);
+    regs->regs[TIMING_REG] = freq;
+}
+
+/* ── union-packed register ──────────────────────────── */
+
+typedef union {
+    uint32_t raw;
+    struct {
+        uint8_t low;
+        uint8_t mid;
+        uint16_t high;
+    } parts;
+} PackedReg;
+
+void union_packed_write(Config* cfg, HwRegs* regs) {
+    PackedReg pr;
+    pr.parts.low = cfg->mode;
+    pr.parts.high = cfg->frequency;
+    regs->regs[CTRL_REG] = pr.raw;
+}
+
 /* ── volatile MMIO direct write (no macro) ──────────── */
 
 #define HW_BASE 0x40001000

@@ -315,6 +315,15 @@ paths:
     min_depth: 2
     difficulty: medium
 
+  # 패턴: freq = MIN(freq, MAX_FREQ); freq = MAX(freq, MIN_FREQ)
+  # 설명: MIN/MAX 매크로를 통한 범위 제한
+  - name: "MIN/MAX macro range"
+    source: "cfg->frequency"
+    sink: "regs->regs[TIMING_REG]"
+    requires: minmax_macro
+    min_depth: 2
+    difficulty: medium
+
 # Scoring: each found path = 1 point
 # Difficulty multiplier: easy=1, medium=2, hard=3
 # Total possible score: sum of all (1 * multiplier)
