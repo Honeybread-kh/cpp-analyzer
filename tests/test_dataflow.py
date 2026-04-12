@@ -449,6 +449,29 @@ class TestMultiCallback:
         pytest.fail("Flexible-array-member sink path not traced")
 
 
+class TestGotoUnwind:
+    """B3: goto-based error unwind — sink behind label, reaching-def
+    analysis must keep the real assignment (not just the initializer)."""
+
+    def test_goto_unwind_timing(self, analysis_db):
+        _, _, paths = analysis_db
+        for p in paths:
+            if ("ucfg->frequency" in p.source.variable
+                    and "UN_TIMING_REG" in p.sink.variable
+                    and p.sink.function == "unwind_write_timing"):
+                return
+        pytest.fail("goto-unwind timing path not traced")
+
+    def test_goto_unwind_mode(self, analysis_db):
+        _, _, paths = analysis_db
+        for p in paths:
+            if ("ucfg->mode" in p.source.variable
+                    and "UN_MODE_REG" in p.sink.variable
+                    and p.sink.function == "unwind_write_mode"):
+                return
+        pytest.fail("goto-unwind mode path not traced")
+
+
 class TestMemcpyBulk:
     """B1: memcpy(&local, cfg, sizeof) blob copy, then field read off local."""
 

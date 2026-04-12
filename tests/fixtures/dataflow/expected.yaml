@@ -623,6 +623,26 @@ paths:
     difficulty: hard
 
   # ══════════════════════════════════════════════════════
+  # B3: goto-based error unwind reaching-def
+  # ══════════════════════════════════════════════════════
+
+  - name: "goto unwind timing reaching-def"
+    source: "ucfg->frequency"
+    sink: "UN_TIMING_REG"
+    expected_function: "unwind_write_timing"
+    requires: goto_reaching_def
+    min_depth: 2
+    difficulty: medium
+
+  - name: "goto unwind mode reaching-def"
+    source: "ucfg->mode"
+    sink: "UN_MODE_REG"
+    expected_function: "unwind_write_mode"
+    requires: goto_reaching_def
+    min_depth: 2
+    difficulty: medium
+
+  # ══════════════════════════════════════════════════════
   # B1: memcpy bulk-copy taint propagation
   # ══════════════════════════════════════════════════════
 
