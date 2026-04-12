@@ -445,10 +445,12 @@ class TaintTracker:
             if a["operator"] == "=" and "->" not in lhs and "." not in lhs:
                 # simple variable assignment (likely pointer alias)
                 if "->" not in rhs and "." not in rhs:
-                    # skip numeric/string literals
+                    # skip numeric/string literals and macro constants
                     if not re.match(r'^[\d"\']', rhs) and rhs not in ("NULL", "nullptr", "0"):
                         clean_rhs = rhs.lstrip("&*")
-                        alias_map.add(lhs, clean_rhs)
+                        # skip all-uppercase identifiers (likely #define constants)
+                        if not re.match(r'^[A-Z_][A-Z0-9_]*$', clean_rhs):
+                            alias_map.add(lhs, clean_rhs)
         return alias_map
 
     def _find_reaching_defs(self, var: str, assignments: list[dict]) -> list[dict]:

@@ -206,6 +206,50 @@ class TestExtendedPatterns:
         pytest.xfail("Phi-node multiple reaching defs not yet working")
 
 
+class TestRangePatterns:
+    """Range: config field min/max constraint extraction."""
+
+    def test_range_clamp_frequency(self, analysis_db):
+        """cfg->frequency with MIN_FREQ/MAX_FREQ clamp → regs"""
+        _, _, paths = analysis_db
+        for p in paths:
+            if "cfg->frequency" in p.source.variable and p.sink.function == "range_checked_write":
+                if "regs->regs[TIMING_REG]" in p.sink.variable:
+                    return
+        pytest.xfail("Range clamp tracking not yet working")
+
+    def test_range_saturate_threshold(self, analysis_db):
+        """cfg->threshold with MAX_THRESHOLD saturate → regs"""
+        _, _, paths = analysis_db
+        for p in paths:
+            if "cfg->threshold" in p.source.variable and p.sink.function == "range_checked_write":
+                if "regs->regs[THRESH_REG]" in p.sink.variable:
+                    return
+        pytest.xfail("Range saturate tracking not yet working")
+
+
+class TestDependencyPatterns:
+    """Dependency: multiple config fields contributing to same register."""
+
+    def test_dependency_freq_mode_ctrl(self, analysis_db):
+        """cfg->frequency + cfg->mode → CTRL_REG (co-dependent)"""
+        _, _, paths = analysis_db
+        for p in paths:
+            if "cfg->frequency" in p.source.variable and p.sink.function == "dependent_write":
+                if "regs->regs[CTRL_REG]" in p.sink.variable:
+                    return
+        pytest.xfail("Dependency tracking (freq+mode→ctrl) not yet working")
+
+    def test_dependency_enable_gates_freq(self, analysis_db):
+        """cfg->enable gates cfg->frequency → TIMING_REG"""
+        _, _, paths = analysis_db
+        for p in paths:
+            if "cfg->frequency" in p.source.variable and p.sink.function == "dependent_write":
+                if "regs->regs[TIMING_REG]" in p.sink.variable:
+                    return
+        pytest.xfail("Dependency gating tracking not yet working")
+
+
 class TestHardPatterns:
     """Hard: inter-procedural, multi-layer function chains."""
 

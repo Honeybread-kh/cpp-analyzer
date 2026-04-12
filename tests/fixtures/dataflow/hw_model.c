@@ -164,3 +164,34 @@ void phi_write(Config* cfg, HwRegs* regs) {
     }
     regs->regs[TIMING_REG] = val;
 }
+
+/* ── range constraints: clamp/saturate ──────────── */
+
+#define MIN_FREQ     100
+#define MAX_FREQ    1000
+#define MAX_THRESHOLD 255
+
+void range_checked_write(Config* cfg, HwRegs* regs) {
+    int freq = cfg->frequency;
+    if (freq < MIN_FREQ) freq = MIN_FREQ;
+    if (freq > MAX_FREQ) freq = MAX_FREQ;
+
+    int thresh = cfg->threshold;
+    if (thresh > MAX_THRESHOLD) thresh = MAX_THRESHOLD;
+
+    regs->regs[TIMING_REG] = freq;
+    regs->regs[THRESH_REG] = thresh;
+}
+
+/* ── dependency: multiple config fields → same reg ── */
+
+void dependent_write(Config* cfg, HwRegs* regs) {
+    /* frequency and mode both contribute to CTRL_REG */
+    uint32_t ctrl = (cfg->frequency / BASE_CLK) | (cfg->mode << 16);
+    regs->regs[CTRL_REG] = ctrl;
+
+    /* enable gates whether timing is written */
+    if (cfg->enable) {
+        regs->regs[TIMING_REG] = cfg->frequency;
+    }
+}
