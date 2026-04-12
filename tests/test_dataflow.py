@@ -52,6 +52,7 @@ def analysis_db():
         {"name": "fw_field", "regex": r"fw->(\w+)\s*="},
         {"name": "REG_WRITE", "regex": r"REG_WRITE\s*\("},
         {"name": "volatile_mmio", "regex": r"\*\s*\(\s*volatile"},
+        {"name": "ptr_deref", "regex": r"^\s*\*\s*\(?\s*\w+"},
     ]
 
     tracker = TaintTracker(repo, pid, source_patterns, sink_patterns)

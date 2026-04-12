@@ -373,6 +373,36 @@ paths:
     difficulty: hard
 
   # ══════════════════════════════════════════════════════
+  # Pointer arithmetic (Gap C3)
+  # ══════════════════════════════════════════════════════
+
+  # 패턴: uint32_t* base = regs->regs; *(base + TIMING_REG) = cfg->frequency
+  - name: "ptr arith via aliased base freq"
+    source: "cfg->frequency"
+    sink_pattern: "base"
+    expected_function: "ptr_arith_write"
+    requires: ptr_arith_tracking
+    min_depth: 2
+    difficulty: medium
+
+  - name: "ptr arith via aliased base mode"
+    source: "cfg->mode"
+    sink_pattern: "base"
+    expected_function: "ptr_arith_write"
+    requires: ptr_arith_tracking
+    min_depth: 2
+    difficulty: medium
+
+  # 패턴: volatile uint32_t* p = (volatile uint32_t*)HW_BASE; *(p + 2) = cfg->threshold
+  - name: "ptr arith volatile MMIO offset"
+    source: "cfg->threshold"
+    sink_pattern: "p \\+"
+    expected_function: "ptr_arith_offset_write"
+    requires: ptr_arith_tracking
+    min_depth: 2
+    difficulty: medium
+
+  # ══════════════════════════════════════════════════════
   # Callback via global function pointer (Gap A4)
   # ══════════════════════════════════════════════════════
 

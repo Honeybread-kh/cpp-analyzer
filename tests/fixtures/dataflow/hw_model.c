@@ -339,6 +339,19 @@ void trigger_event(Config* cfg, HwRegs* regs) {
     g_event_cb(regs, cfg->enable);
 }
 
+/* ── pointer arithmetic (Gap C3) ─────────────────── */
+
+void ptr_arith_write(Config* cfg, HwRegs* regs) {
+    uint32_t* base = regs->regs;
+    *(base + TIMING_REG) = cfg->frequency;
+    *(base + MODE_REG) = cfg->mode;
+}
+
+void ptr_arith_offset_write(Config* cfg) {
+    volatile uint32_t* p = (volatile uint32_t*)HW_BASE;
+    *(p + 2) = cfg->threshold;
+}
+
 /* ── dependency: multiple config fields → same reg ── */
 
 void dependent_write(Config* cfg, HwRegs* regs) {
