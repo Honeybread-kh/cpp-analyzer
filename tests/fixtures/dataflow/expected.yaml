@@ -324,6 +324,22 @@ paths:
     min_depth: 2
     difficulty: medium
 
+  # 패턴: pr.parts.low = cfg->mode; regs[X] = pr.raw
+  # 설명: union 타입의 raw 멤버 읽기는 parts.* 멤버 쓰기와 storage 공유
+  - name: "union aliasing mode via raw"
+    source: "cfg->mode"
+    sink: "regs->regs[CTRL_REG]"
+    requires: union_aliasing
+    min_depth: 3
+    difficulty: hard
+
+  - name: "union aliasing frequency via raw"
+    source: "cfg->frequency"
+    sink: "regs->regs[CTRL_REG]"
+    requires: union_aliasing
+    min_depth: 3
+    difficulty: hard
+
 # Scoring: each found path = 1 point
 # Difficulty multiplier: easy=1, medium=2, hard=3
 # Total possible score: sum of all (1 * multiplier)

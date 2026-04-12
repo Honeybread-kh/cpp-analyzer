@@ -126,6 +126,7 @@ class TaintTracker:
         self._file_returns: dict[str, list[dict]] = {}      # path -> return stmts
         self._file_enums: dict[str, list[dict]] = {}        # path -> enum definitions
         self._file_ranges: dict[str, list[dict]] = {}       # path -> range constraints
+        self._file_unions: dict[str, list[dict]] = {}       # path -> union instances
         self._func_to_file: dict[str, str] = {}             # func_name -> file path
 
     def trace(self, max_depth: int = 5, max_paths: int = 100) -> list[DataFlowPath]:
@@ -200,6 +201,8 @@ class TaintTracker:
             returns = ts_parser.extract_function_returns(root)
             enums = ts_parser.extract_enum_definitions(root)
             ranges = ts_parser.extract_range_constraints(root)
+            union_types = ts_parser.extract_union_types(root)
+            union_instances = ts_parser.extract_union_instances(root, union_types) if union_types else []
 
             self._file_assignments[rp] = assignments
             self._file_calls[rp] = calls
@@ -207,6 +210,7 @@ class TaintTracker:
             self._file_returns[rp] = returns
             self._file_enums[rp] = enums
             self._file_ranges[rp] = ranges
+            self._file_unions[rp] = union_instances
 
             for a in assignments:
                 if a["function"]:
@@ -326,6 +330,16 @@ class TaintTracker:
 
         # find assignments where LHS matches our variable
         reaching = self._find_reaching_defs(resolved_var, func_assignments)
+
+        # union aliasing: if resolved_var is X.Y and X is a union instance,
+        # also include reaching defs of X.* (e.g., pr.raw shares storage with pr.parts.*)
+        if not reaching and "." in resolved_var:
+            base = resolved_var.split(".", 1)[0]
+            if self._is_union_instance(base, func_name, file_path):
+                for a in reversed(func_assignments):
+                    lhs = a["lhs"]
+                    if lhs != resolved_var and lhs.startswith(base + "."):
+                        reaching.append(a)
 
         for assign in reaching:
             # if RHS is a function call, dive into the callee's return values
@@ -490,6 +504,13 @@ class TaintTracker:
             for pattern in self._compiled_sources:
                 if pattern.search(swapped):
                     return True
+        return False
+
+    def _is_union_instance(self, var: str, func_name: str, file_path: str) -> bool:
+        """Check if var is declared as a union-typed local in the given function."""
+        for ui in self._file_unions.get(file_path, []):
+            if ui["function"] == func_name and ui["var_name"] == var:
+                return True
         return False
 
     def _is_param(self, var: str, func_name: str, file_path: str) -> bool:

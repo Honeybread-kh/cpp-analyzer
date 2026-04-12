@@ -1160,3 +1160,75 @@ def _extract_variables(node: Node) -> list[str]:
             vars_found.append(name)
 
     return vars_found
+
+
+def extract_union_types(root: Node) -> set[str]:
+    """Extract names of union types defined in the file.
+
+    Handles:
+      typedef union { ... } Name;
+      typedef union Name { ... } AliasName;
+      union Name { ... };
+    """
+    names: set[str] = set()
+
+    # typedef union declarations: type_definition > union_specifier
+    for tdef in walk_type(root, "type_definition"):
+        has_union = False
+        for child in tdef.children:
+            if child.type == "union_specifier":
+                has_union = True
+                n = child.child_by_field_name("name")
+                if n is not None:
+                    names.add(node_text(n).strip())
+        if has_union:
+            # typedef alias is the last type_identifier child
+            for child in tdef.named_children:
+                if child.type == "type_identifier":
+                    names.add(node_text(child).strip())
+
+    # bare union declarations: union Name { ... };
+    for u in walk_type(root, "union_specifier"):
+        n = u.child_by_field_name("name")
+        if n is not None:
+            names.add(node_text(n).strip())
+
+    return names
+
+
+def extract_union_instances(root: Node, union_type_names: set[str]) -> list[dict]:
+    """Find local variable declarations whose type is a known union type.
+
+    Returns list of dicts: {var_name, type_name, function, line}
+    """
+    results = []
+    for decl in walk_type(root, "declaration"):
+        type_node = decl.child_by_field_name("type")
+        if type_node is None:
+            continue
+        type_text = node_text(type_node).strip()
+        # strip 'union ' prefix if present
+        clean_type = type_text.replace("union ", "").strip()
+        if clean_type not in union_type_names:
+            continue
+        # extract the declarator(s)
+        for child in decl.named_children:
+            if child.type == "init_declarator":
+                name_node = child.child_by_field_name("declarator")
+                if name_node is not None:
+                    var_name = node_text(name_node).strip()
+                    results.append({
+                        "var_name": var_name,
+                        "type_name": clean_type,
+                        "function": _find_enclosing_function(decl) or "",
+                        "line": decl.start_point[0] + 1,
+                    })
+            elif child.type == "identifier":
+                var_name = node_text(child).strip()
+                results.append({
+                    "var_name": var_name,
+                    "type_name": clean_type,
+                    "function": _find_enclosing_function(decl) or "",
+                    "line": decl.start_point[0] + 1,
+                })
+    return results
