@@ -51,15 +51,28 @@ def walk_named(root: Node) -> Iterator[Node]:
 def extract_struct_fields(root: Node) -> list[dict]:
     """Extract all struct definitions and their fields from a parsed file.
 
+    Handles both named structs (struct Foo { ... }) and typedef structs
+    (typedef struct { ... } Foo;).
+
     Returns list of dicts:
         struct_name, field_name, field_type, line, comment
     """
     results = []
     for struct_node in walk_type(root, "struct_specifier"):
         name_node = struct_node.child_by_field_name("name")
-        if name_node is None:
+        if name_node is not None:
+            struct_name = node_text(name_node)
+        elif struct_node.parent and struct_node.parent.type == "type_definition":
+            # typedef struct { ... } Name; — get name from sibling type_identifier
+            struct_name = None
+            for sibling in struct_node.parent.named_children:
+                if sibling.type == "type_identifier":
+                    struct_name = node_text(sibling)
+                    break
+            if struct_name is None:
+                continue
+        else:
             continue
-        struct_name = node_text(name_node)
 
         body = struct_node.child_by_field_name("body")
         if body is None:
@@ -719,6 +732,189 @@ def extract_function_params(root: Node) -> list[dict]:
 
     return results
 
+
+# ── enum definition extraction ─────────────────────────────────────────────
+
+def extract_enum_definitions(root: Node) -> list[dict]:
+    """Extract all enum definitions from a parsed file.
+
+    Handles both:
+      - typedef enum { ... } Name;
+      - enum Name { ... };
+
+    Returns list of dicts:
+        enum_name, values: [{name, value}], line
+    """
+    results = []
+
+    # 1. typedef enum: parent is type_definition
+    for td in walk_type(root, "type_definition"):
+        enum_node = None
+        type_name = None
+        for child in td.named_children:
+            if child.type == "enum_specifier":
+                enum_node = child
+            elif child.type == "type_identifier":
+                type_name = node_text(child)
+        if enum_node is None or type_name is None:
+            continue
+
+        values = _extract_enumerator_values(enum_node)
+        results.append({
+            "enum_name": type_name,
+            "values": values,
+            "line": td.start_point[0] + 1,
+        })
+
+    # 2. named enum (not inside typedef)
+    for enum_node in walk_type(root, "enum_specifier"):
+        # skip if already handled as part of a typedef
+        if enum_node.parent and enum_node.parent.type == "type_definition":
+            continue
+        # skip forward declarations / type references (no body)
+        if enum_node.child_by_field_name("body") is None:
+            continue
+        name_node = enum_node.child_by_field_name("name")
+        if name_node is None:
+            continue
+        enum_name = node_text(name_node)
+        values = _extract_enumerator_values(enum_node)
+        results.append({
+            "enum_name": enum_name,
+            "values": values,
+            "line": enum_node.start_point[0] + 1,
+        })
+
+    return results
+
+
+def _extract_enumerator_values(enum_node: Node) -> list[dict]:
+    """Extract enumerator name/value pairs from an enum_specifier body."""
+    values = []
+    body = enum_node.child_by_field_name("body")
+    if body is None:
+        return values
+
+    auto_val = 0
+    for child in body.named_children:
+        if child.type != "enumerator":
+            continue
+        name_node = child.child_by_field_name("name")
+        val_node = child.child_by_field_name("value")
+        if name_node is None:
+            continue
+        name = node_text(name_node)
+        if val_node is not None:
+            val_text = node_text(val_node).strip()
+            try:
+                auto_val = int(val_text, 0)
+                values.append({"name": name, "value": auto_val})
+            except ValueError:
+                values.append({"name": name, "value": val_text})
+                auto_val += 1
+                continue
+        else:
+            values.append({"name": name, "value": auto_val})
+        auto_val += 1
+    return values
+
+
+# ── range constraint extraction ────────────────────────────────────────────
+
+def extract_range_constraints(root: Node) -> list[dict]:
+    """Extract range constraints from if-statements that clamp/saturate variables.
+
+    Detects patterns:
+        if (var < BOUND) var = BOUND;   → min constraint
+        if (var > BOUND) var = BOUND;   → max constraint
+
+    The condition variable must match the assignment LHS, and the bound
+    value must match the assignment RHS.
+
+    Returns list of dicts:
+        variable, constraint_type ("min"|"max"), bound_value, line, function
+    """
+    results = []
+
+    for if_node in walk_type(root, "if_statement"):
+        cond = if_node.child_by_field_name("condition")
+        cons = if_node.child_by_field_name("consequence")
+        if cond is None or cons is None:
+            continue
+
+        # unwrap parenthesized_expression
+        inner = cond
+        if inner.type == "parenthesized_expression" and inner.named_child_count > 0:
+            inner = inner.named_children[0]
+
+        if inner.type != "binary_expression":
+            continue
+
+        left = inner.child_by_field_name("left")
+        right = inner.child_by_field_name("right")
+        if left is None or right is None:
+            continue
+
+        # extract operator
+        op = ""
+        for child in inner.children:
+            if not child.is_named and child.type in ("<", "<=", ">", ">="):
+                op = child.type
+                break
+        if not op:
+            continue
+
+        left_text = node_text(left).strip()
+        right_text = node_text(right).strip()
+
+        # determine variable and bound based on operator direction
+        if op in ("<", "<="):
+            var_name = left_text
+            bound = right_text
+            constraint_type = "min"
+        else:  # > or >=
+            var_name = left_text
+            bound = right_text
+            constraint_type = "max"
+
+        # verify: consequence assigns same variable to same bound
+        assigns = _extract_simple_assignments(cons)
+        matched = False
+        for a in assigns:
+            if a["lhs"] == var_name and a["rhs"] == bound:
+                matched = True
+                break
+        if not matched:
+            continue
+
+        func_name = _find_enclosing_function(if_node)
+        results.append({
+            "variable": var_name,
+            "constraint_type": constraint_type,
+            "bound_value": bound,
+            "line": if_node.start_point[0] + 1,
+            "function": func_name or "",
+        })
+
+    return results
+
+
+def _extract_simple_assignments(node: Node) -> list[dict]:
+    """Extract simple assignments (lhs = rhs) within a node, returning text."""
+    results = []
+    for assign in walk_type(node, "assignment_expression"):
+        left = assign.child_by_field_name("left")
+        right = assign.child_by_field_name("right")
+        if left is None or right is None:
+            continue
+        results.append({
+            "lhs": node_text(left).strip(),
+            "rhs": node_text(right).strip(),
+        })
+    return results
+
+
+# ── variable extraction ────────────────────────────────────────────────────
 
 def _extract_variables(node: Node) -> list[str]:
     """Extract all variable/field references from an expression node."""

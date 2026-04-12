@@ -183,6 +183,32 @@ void range_checked_write(Config* cfg, HwRegs* regs) {
     regs->regs[THRESH_REG] = thresh;
 }
 
+/* ── enum types ─────────────────────────────────────── */
+
+typedef enum { MODE_LOW = 0, MODE_MED = 1, MODE_HIGH = 2 } OpMode;
+enum ClkSource { CLK_INT = 0, CLK_EXT = 1, CLK_PLL = 2 };
+
+typedef struct {
+    OpMode op_mode;
+    enum ClkSource clk_src;
+    int power_level;
+} ExtConfig;
+
+void enum_config_write(ExtConfig* ecfg, HwRegs* regs) {
+    regs->regs[MODE_REG] = ecfg->op_mode;
+    regs->regs[CTRL_REG] = ecfg->clk_src;
+}
+
+#define MIN_POWER  0
+#define MAX_POWER  100
+
+void enum_range_write(ExtConfig* ecfg, HwRegs* regs) {
+    int pwr = ecfg->power_level;
+    if (pwr < MIN_POWER) pwr = MIN_POWER;
+    if (pwr > MAX_POWER) pwr = MAX_POWER;
+    regs->regs[THRESH_REG] = pwr;
+}
+
 /* ── dependency: multiple config fields → same reg ── */
 
 void dependent_write(Config* cfg, HwRegs* regs) {

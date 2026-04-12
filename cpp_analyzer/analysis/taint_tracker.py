@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import ts_parser
-from .models import TaintNode, DataFlowPath
+from .models import TaintNode, DataFlowPath, ConfigFieldSpec
 from ..db.repository import Repository
 
 
@@ -124,6 +124,8 @@ class TaintTracker:
         self._file_calls: dict[str, list[dict]] = {}        # path -> call args
         self._file_params: dict[str, list[dict]] = {}       # path -> function params
         self._file_returns: dict[str, list[dict]] = {}      # path -> return stmts
+        self._file_enums: dict[str, list[dict]] = {}        # path -> enum definitions
+        self._file_ranges: dict[str, list[dict]] = {}       # path -> range constraints
         self._func_to_file: dict[str, str] = {}             # func_name -> file path
 
     def trace(self, max_depth: int = 5, max_paths: int = 100) -> list[DataFlowPath]:
@@ -196,11 +198,15 @@ class TaintTracker:
             calls = ts_parser.extract_call_arguments(root)
             params = ts_parser.extract_function_params(root)
             returns = ts_parser.extract_function_returns(root)
+            enums = ts_parser.extract_enum_definitions(root)
+            ranges = ts_parser.extract_range_constraints(root)
 
             self._file_assignments[rp] = assignments
             self._file_calls[rp] = calls
             self._file_params[rp] = params
             self._file_returns[rp] = returns
+            self._file_enums[rp] = enums
+            self._file_ranges[rp] = ranges
 
             for a in assignments:
                 if a["function"]:
@@ -586,6 +592,79 @@ class TaintTracker:
                 if a["lhs"] == var:
                     results.append((a["function"], file_path, a))
         return results
+
+    def generate_config_specs(self) -> list[ConfigFieldSpec]:
+        """Generate config field specifications with enum/range metadata.
+
+        Combines struct field definitions, enum definitions, and range
+        constraints to produce enriched ConfigFieldSpec entries.
+
+        Must be called after trace() or _load_all_files() so caches are populated.
+        """
+        if not self._file_assignments and not self._file_enums:
+            self._load_all_files()
+
+        # collect all enum definitions across files
+        all_enums: dict[str, list[str]] = {}  # enum_name -> [value_names]
+        for file_path, enums in self._file_enums.items():
+            for e in enums:
+                all_enums[e["enum_name"]] = [v["name"] for v in e["values"]]
+
+        # collect all range constraints across files
+        all_ranges: list[dict] = []
+        for file_path, ranges in self._file_ranges.items():
+            for r in ranges:
+                all_ranges.append(r)
+
+        # collect struct fields
+        specs: list[ConfigFieldSpec] = []
+        files = self.repo.list_files(self.project_id)
+
+        for f in files:
+            rp = f["relative_path"]
+            if not rp.endswith((".c", ".cpp", ".cc", ".cxx", ".h", ".hpp", ".hxx")):
+                continue
+            path = f["path"]
+            root = ts_parser.parse_file(path)
+            if root is None:
+                continue
+
+            struct_fields = ts_parser.extract_struct_fields(root)
+            for sf in struct_fields:
+                field_name = sf["field_name"]
+                struct_name = sf["struct_name"]
+                field_type = sf["field_type"]
+
+                spec = ConfigFieldSpec(
+                    field_name=field_name,
+                    struct_name=struct_name,
+                    field_type=field_type,
+                    file=rp,
+                    line=sf["line"],
+                )
+
+                # match enum type: check if field_type matches an enum name
+                # handle both "OpMode" and "enum ClkSource" forms
+                clean_type = field_type.replace("enum ", "").strip()
+                if clean_type in all_enums:
+                    spec.enum_type = clean_type
+                    spec.enum_values = all_enums[clean_type]
+
+                # match range constraints: look for constraints where the
+                # variable name ends with this field name
+                for rc in all_ranges:
+                    rc_var = rc["variable"]
+                    # match if variable name is the field name or ends with
+                    # a suffix that matches (e.g. "pwr" for "power_level")
+                    if rc_var == field_name:
+                        if rc["constraint_type"] == "min":
+                            spec.min_value = rc["bound_value"]
+                        elif rc["constraint_type"] == "max":
+                            spec.max_value = rc["bound_value"]
+
+                specs.append(spec)
+
+        return specs
 
     def save_results(self, paths: list[DataFlowPath]) -> int:
         """Save analysis results to the database."""

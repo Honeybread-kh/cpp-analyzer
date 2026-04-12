@@ -125,3 +125,22 @@ class DataFlowPath:
                 arrow = f"→({nodes[i-1].transform})→" if nodes[i-1].transform else "→"
                 parts.append(f"  {arrow} {node.variable}  {loc}")
         return "\n".join(parts)
+
+
+# ── config field spec ────────────────────────────────────────────────────────
+
+@dataclass
+class ConfigFieldSpec:
+    """Specification of a config struct field with enum/range metadata."""
+    field_name: str
+    struct_name: str = ""
+    field_type: str = ""
+    enum_type: str | None = None
+    enum_values: list[str] = field(default_factory=list)
+    min_value: str | None = None
+    max_value: str | None = None
+    file: str = ""
+    line: int = 0
+
+    def to_dict(self) -> dict:
+        return asdict(self)
