@@ -372,6 +372,58 @@ paths:
     min_depth: 3
     difficulty: hard
 
+  # ══════════════════════════════════════════════════════
+  # Type casting passthrough (Gap C2)
+  # ══════════════════════════════════════════════════════
+
+  # 패턴: regs->regs[X] = (uint32_t)cfg->frequency
+  - name: "cast direct frequency"
+    source: "cfg->frequency"
+    sink: "regs->regs[TIMING_REG]"
+    expected_function: "cast_write"
+    requires: cast_tracking
+    min_depth: 2
+    difficulty: medium
+
+  - name: "cast parenthesized mode"
+    source: "cfg->mode"
+    sink: "regs->regs[MODE_REG]"
+    expected_function: "cast_write"
+    requires: cast_tracking
+    min_depth: 2
+    difficulty: medium
+
+  # 패턴: v = (uint32_t)cfg->threshold; regs[X] = (uint32_t)v
+  - name: "cast chained through local"
+    source: "cfg->threshold"
+    sink: "regs->regs[THRESH_REG]"
+    expected_function: "cast_intermediate"
+    requires: cast_tracking
+    min_depth: 3
+    difficulty: medium
+
+  # ══════════════════════════════════════════════════════
+  # Struct array indexing (Gap A5)
+  # ══════════════════════════════════════════════════════
+
+  # 패턴: ch[0].freq = cfg->frequency (init_channels)
+  #        regs[X] = channels[0].freq (array_struct_write)
+  - name: "struct array cross-func freq"
+    source: "cfg->frequency"
+    sink: "regs->regs[TIMING_REG]"
+    expected_function: "array_struct_write"
+    requires: struct_array_indexing
+    min_depth: 3
+    difficulty: hard
+
+  - name: "struct array cross-func mode"
+    source: "cfg->mode"
+    sink: "regs->regs[MODE_REG]"
+    expected_function: "array_struct_write"
+    requires: struct_array_indexing
+    min_depth: 3
+    difficulty: hard
+
 # Scoring: each found path = 1 point
 # Difficulty multiplier: easy=1, medium=2, hard=3
 # Total possible score: sum of all (1 * multiplier)

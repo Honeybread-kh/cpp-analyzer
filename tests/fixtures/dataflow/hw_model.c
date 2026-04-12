@@ -264,6 +264,35 @@ void volatile_mmio_write(Config* cfg) {
     *(volatile uint32_t*)(HW_BASE + 0x04) = cfg->mode;
 }
 
+/* ── type casting passthrough (Gap C2) ───────────── */
+
+void cast_write(Config* cfg, HwRegs* regs) {
+    regs->regs[TIMING_REG] = (uint32_t)cfg->frequency;
+    regs->regs[MODE_REG] = (uint32_t)(cfg->mode);
+}
+
+void cast_intermediate(Config* cfg, HwRegs* regs) {
+    uint32_t v = (uint32_t)cfg->threshold;
+    regs->regs[THRESH_REG] = (uint32_t)v;
+}
+
+/* ── struct array indexing (Gap A5) ──────────────── */
+
+typedef struct {
+    int freq;
+    int mode;
+} ChannelCfg;
+
+void init_channels(Config* cfg, ChannelCfg* ch) {
+    ch[0].freq = cfg->frequency;
+    ch[1].mode = cfg->mode;
+}
+
+void array_struct_write(ChannelCfg* channels, HwRegs* regs) {
+    regs->regs[TIMING_REG] = channels[0].freq;
+    regs->regs[MODE_REG] = channels[1].mode;
+}
+
 /* ── function pointer indirect call ──────────────── */
 
 typedef void (*reg_writer_t)(HwRegs*, uint32_t);

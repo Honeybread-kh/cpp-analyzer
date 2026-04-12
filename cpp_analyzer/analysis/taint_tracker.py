@@ -558,11 +558,21 @@ class TaintTracker:
         return False
 
     def _is_param(self, var: str, func_name: str, file_path: str) -> bool:
-        """Check if var is a parameter of the given function."""
+        """Check if var is a parameter of the given function.
+
+        Accepts plain access (`p`), arrow/dot access (`p->f`, `p.f`), and
+        array-indexed struct access (`p[i].f`).
+        """
         for fp in self._file_params.get(file_path, []):
             if fp["function_name"] == func_name:
                 for param in fp["params"]:
-                    if param["name"] == var or var.startswith(param["name"] + "->") or var.startswith(param["name"] + "."):
+                    name = param["name"]
+                    if (
+                        var == name
+                        or var.startswith(name + "->")
+                        or var.startswith(name + ".")
+                        or var.startswith(name + "[")
+                    ):
                         return True
         return False
 
