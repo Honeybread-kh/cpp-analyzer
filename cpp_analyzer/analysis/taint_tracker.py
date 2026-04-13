@@ -338,6 +338,30 @@ class TaintTracker:
                         if expr in self._func_to_file:
                             self._fnptr_array_elements.setdefault(arr_base, set()).add(expr)
 
+        # G1: local fnptr alias. `fp = arr[IDX]` or `fp = ops->member` —
+        # when callee of an indirect call is a plain identifier, resolve
+        # it via this map to find the fnptr source table / member.
+        # key: (file_path, function, local_var) → array_base | "<type>.<member>"
+        self._fnptr_local_to_array: dict[tuple[str, str, str], str] = {}
+        self._fnptr_local_to_member: dict[tuple[str, str, str], str] = {}
+        for rp, assignments in self._file_assignments.items():
+            for a in assignments:
+                if not a["function"] or a.get("rhs_call"):
+                    continue
+                lhs = a["lhs"]
+                rhs = (a["rhs"] or "").strip()
+                if any(c in lhs for c in ".->["):
+                    continue
+                # `fp = arr[IDX]`
+                m = re.match(r'^(\w+)\s*\[', rhs)
+                if m:
+                    self._fnptr_local_to_array[(rp, a["function"], lhs)] = m.group(1)
+                    continue
+                # `fp = ops->member` / `fp = obj.member`
+                m2 = re.match(r'^([A-Za-z_]\w*)\s*(?:->|\.)\s*([A-Za-z_]\w*)\s*$', rhs)
+                if m2:
+                    self._fnptr_local_to_member[(rp, a["function"], lhs)] = m2.group(2)
+
         # F3: populate fnptr table entries from static designated-init tables
         for entry in getattr(self, "_fnptr_table_entries_pending", []):
             if entry["callee"] in self._func_to_file:
@@ -775,6 +799,14 @@ class TaintTracker:
                         m = re.match(r'^(\w+)\s*\[', call["callee_name"])
                         if m and func_name in self._fnptr_array_elements.get(m.group(1), set()):
                             indirect = True
+                        # G1: plain-identifier callee `fp(...)` where fp was
+                        # assigned from arr[IDX] earlier in the function.
+                        if not indirect and re.fullmatch(r'[A-Za-z_]\w*', call["callee_name"]):
+                            arr_base = self._fnptr_local_to_array.get(
+                                (file_path, call["function"], call["callee_name"])
+                            )
+                            if arr_base and func_name in self._fnptr_array_elements.get(arr_base, set()):
+                                indirect = True
                         # P3: C++ member-style calls. `w->method(...)` and
                         # `obj.method(...)` match overrides by bare method
                         # name. Pointer-to-member `(w->*fn)(...)` is NOT

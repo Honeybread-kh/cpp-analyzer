@@ -601,6 +601,29 @@ class TestMemcpyBulk:
         pytest.fail("memcpy bulk-copy mode path not traced")
 
 
+class TestFnptrLocalAlias:
+    """G1: fnptr copied to local variable, then invoked via plain identifier.
+    `fp = arr[IDX]; fp(cfg, r)` must resolve through the static table."""
+
+    def test_local_alias_timing(self, analysis_db):
+        _, _, paths = analysis_db
+        for p in paths:
+            if ("cfg->freq" in p.source.variable
+                    and "G1_TIMING_REG" in p.sink.variable
+                    and p.sink.function == "g1_write_timing"):
+                return
+        pytest.fail("fnptr local alias timing path not traced")
+
+    def test_local_alias_mode(self, analysis_db):
+        _, _, paths = analysis_db
+        for p in paths:
+            if ("cfg->mode" in p.source.variable
+                    and "G1_MODE_REG" in p.sink.variable
+                    and p.sink.function == "g1_write_mode"):
+                return
+        pytest.fail("fnptr local alias mode path not traced")
+
+
 class TestAliasingAdvanced:
     """P2: conditional alias, linked-list walk, dynamic-index sinks."""
 
