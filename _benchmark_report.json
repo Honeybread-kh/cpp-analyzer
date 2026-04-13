@@ -1,8 +1,8 @@
 {
-  "score": 159,
-  "max_score": 159,
+  "score": 165,
+  "max_score": 165,
   "pct": 100.0,
-  "total_paths_found": 88,
+  "total_paths_found": 94,
   "results": [
     {
       "name": "direct threshold",
@@ -363,6 +363,18 @@
       "difficulty": "hard",
       "status": "PASS",
       "requires": "flexible_array_member"
+    },
+    {
+      "name": "compound literal freq",
+      "difficulty": "hard",
+      "status": "PASS",
+      "requires": "designated_init"
+    },
+    {
+      "name": "compound literal mode",
+      "difficulty": "hard",
+      "status": "PASS",
+      "requires": "designated_init"
     },
     {
       "name": "writel timing sink",

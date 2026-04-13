@@ -452,6 +452,31 @@ class TestMultiCallback:
         pytest.fail("Flexible-array-member sink path not traced")
 
 
+class TestDesignatedInit:
+    """F2: compound literal `(T){.field = X}` passed as arg — field-taint
+    must flow to the callee's struct-field read."""
+
+    def test_compound_literal_freq(self, analysis_db):
+        _, _, paths = analysis_db
+        for p in paths:
+            if ("cfg->frequency" in p.source.variable
+                    and "F2_TIMING_REG" in p.sink.variable):
+                funcs = {p.sink.function} | {s.function for s in p.steps}
+                if "f2_apply" in funcs:
+                    return
+        pytest.fail("designated init compound literal freq not traced")
+
+    def test_compound_literal_mode(self, analysis_db):
+        _, _, paths = analysis_db
+        for p in paths:
+            if ("cfg->mode" in p.source.variable
+                    and "F2_MODE_REG" in p.sink.variable):
+                funcs = {p.sink.function} | {s.function for s in p.steps}
+                if "f2_apply" in funcs:
+                    return
+        pytest.fail("designated init compound literal mode not traced")
+
+
 class TestMmioAccessor:
     """F1: kernel MMIO accessor (writel/iowrite32/regmap_write) as sink."""
 

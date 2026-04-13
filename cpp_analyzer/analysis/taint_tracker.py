@@ -520,11 +520,34 @@ class TaintTracker:
         # try tracing through function parameters (inter-procedural)
         if self._is_param(var, func_name, file_path):
             callers = self._find_callers_with_args(func_name, var)
+            # F2: if tracing `<param>.<field>` and caller's arg_expr is a
+            # compound literal `(T){.field = X, ...}`, we should trace X
+            # (the initializer for that specific field), not the whole
+            # compound literal.
+            field_name = None
+            for sep in (".", "->"):
+                if sep in var:
+                    base, _, rest = var.partition(sep)
+                    # only for the base param (no further derefs)
+                    if "." not in rest and "->" not in rest and "[" not in rest:
+                        field_name = rest
+                        break
             for caller_func, caller_file, arg_expr in callers:
                 # P1: if arg_expr is a composite expression (e.g. "v4 | 0x1u",
                 # "v2 + 1"), extract component identifiers and try each so
                 # deep param-propagation chains with arithmetic are traced.
                 arg_candidates = [arg_expr]
+                # F2: extract compound literal field initializer
+                if field_name and "{" in arg_expr and "." + field_name in arg_expr:
+                    m = re.search(
+                        r"\."
+                        + re.escape(field_name)
+                        + r"\s*=\s*([^,}]+)",
+                        arg_expr,
+                    )
+                    if m:
+                        init_expr = m.group(1).strip()
+                        arg_candidates.insert(0, init_expr)
                 if any(c in arg_expr for c in "+-*/|&^<>!~()"):
                     try:
                         sub_vars = ts_parser._extract_variables(

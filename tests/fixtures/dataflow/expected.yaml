@@ -623,6 +623,26 @@ paths:
     difficulty: hard
 
   # ══════════════════════════════════════════════════════
+  # F2: designated initializer / compound literal
+  # ══════════════════════════════════════════════════════
+
+  - name: "compound literal freq"
+    source: "cfg->frequency"
+    sink: "F2_TIMING_REG"
+    expected_function: "f2_apply"
+    requires: designated_init
+    min_depth: 2
+    difficulty: hard
+
+  - name: "compound literal mode"
+    source: "cfg->mode"
+    sink: "F2_MODE_REG"
+    expected_function: "f2_apply"
+    requires: designated_init
+    min_depth: 2
+    difficulty: hard
+
+  # ══════════════════════════════════════════════════════
   # F1: MMIO accessor function sinks
 
   - name: "writel timing sink"
