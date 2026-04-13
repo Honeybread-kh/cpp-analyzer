@@ -1,8 +1,8 @@
 {
-  "score": 171,
-  "max_score": 171,
+  "score": 179,
+  "max_score": 179,
   "pct": 100.0,
-  "total_paths_found": 106,
+  "total_paths_found": 112,
   "results": [
     {
       "name": "direct threshold",
@@ -441,6 +441,24 @@
       "difficulty": "hard",
       "status": "PASS",
       "requires": "memcpy_bulk_copy"
+    },
+    {
+      "name": "fnptr local alias timing",
+      "difficulty": "hard",
+      "status": "PASS",
+      "requires": "fnptr_local_alias"
+    },
+    {
+      "name": "fnptr local alias mode",
+      "difficulty": "hard",
+      "status": "PASS",
+      "requires": "fnptr_local_alias"
+    },
+    {
+      "name": "is_err guarded regmap_write",
+      "difficulty": "medium",
+      "status": "PASS",
+      "requires": "is_err_guard"
     }
   ],
   "gaps": []

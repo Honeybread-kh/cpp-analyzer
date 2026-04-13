@@ -769,6 +769,18 @@ paths:
     min_depth: 2
     difficulty: hard
 
+  # ══════════════════════════════════════════════════════
+  # G2: IS_ERR-guarded pointer handle as sink arg
+  # ══════════════════════════════════════════════════════
+
+  - name: "is_err guarded regmap_write"
+    source: "cfg->ctrl"
+    sink: "regmap_write"
+    expected_function: "g2_probe"
+    requires: is_err_guard
+    min_depth: 1
+    difficulty: medium
+
 # Scoring: each found path = 1 point
 # Difficulty multiplier: easy=1, medium=2, hard=3
 # Total possible score: sum of all (1 * multiplier)

@@ -1,8 +1,8 @@
 {
-  "score": 171,
-  "max_score": 171,
+  "score": 153,
+  "max_score": 153,
   "pct": 100.0,
-  "total_paths_found": 106,
+  "total_paths_found": 83,
   "results": [
     {
       "name": "direct threshold",
@@ -365,48 +365,6 @@
       "requires": "flexible_array_member"
     },
     {
-      "name": "compound literal freq",
-      "difficulty": "hard",
-      "status": "PASS",
-      "requires": "designated_init"
-    },
-    {
-      "name": "compound literal mode",
-      "difficulty": "hard",
-      "status": "PASS",
-      "requires": "designated_init"
-    },
-    {
-      "name": "fnptr ops timing",
-      "difficulty": "hard",
-      "status": "PASS",
-      "requires": "fnptr_indexed_table"
-    },
-    {
-      "name": "fnptr ops mode",
-      "difficulty": "hard",
-      "status": "PASS",
-      "requires": "fnptr_indexed_table"
-    },
-    {
-      "name": "writel timing sink",
-      "difficulty": "medium",
-      "status": "PASS",
-      "requires": "mmio_accessor"
-    },
-    {
-      "name": "iowrite32 mode sink",
-      "difficulty": "medium",
-      "status": "PASS",
-      "requires": "mmio_accessor"
-    },
-    {
-      "name": "regmap_write flags sink",
-      "difficulty": "medium",
-      "status": "PASS",
-      "requires": "mmio_accessor"
-    },
-    {
       "name": "container_of frequency",
       "difficulty": "hard",
       "status": "PASS",
@@ -443,5 +401,180 @@
       "requires": "memcpy_bulk_copy"
     }
   ],
-  "gaps": []
+  "gaps": [],
+  "timestamp": "2026-04-13T00:15:44.563090Z",
+  "commit": "e02ff33eaa8640b116780605e22e3939e3ccdac7",
+  "branch": "main",
+  "by_difficulty": {
+    "easy": {
+      "pass": 8,
+      "total": 8
+    },
+    "medium": {
+      "pass": 29,
+      "total": 29
+    },
+    "hard": {
+      "pass": 29,
+      "total": 29
+    }
+  },
+  "by_requires": {
+    "basic": {
+      "pass": 5,
+      "total": 5
+    },
+    "alias_tracking": {
+      "pass": 1,
+      "total": 1
+    },
+    "macro_sink": {
+      "pass": 2,
+      "total": 2
+    },
+    "conditional_tracking": {
+      "pass": 1,
+      "total": 1
+    },
+    "compound_assignment": {
+      "pass": 1,
+      "total": 1
+    },
+    "inter_procedural": {
+      "pass": 2,
+      "total": 2
+    },
+    "ternary_tracking": {
+      "pass": 1,
+      "total": 1
+    },
+    "array_element_tracking": {
+      "pass": 1,
+      "total": 1
+    },
+    "bitfield_tracking": {
+      "pass": 1,
+      "total": 1
+    },
+    "global_tracking": {
+      "pass": 1,
+      "total": 1
+    },
+    "struct_copy_tracking": {
+      "pass": 1,
+      "total": 1
+    },
+    "multi_reaching_def": {
+      "pass": 1,
+      "total": 1
+    },
+    "range_tracking": {
+      "pass": 2,
+      "total": 2
+    },
+    "dependency_tracking": {
+      "pass": 2,
+      "total": 2
+    },
+    "enum_tracking": {
+      "pass": 3,
+      "total": 3
+    },
+    "ternary_range": {
+      "pass": 1,
+      "total": 1
+    },
+    "clamp_macro": {
+      "pass": 1,
+      "total": 1
+    },
+    "volatile_mmio": {
+      "pass": 2,
+      "total": 2
+    },
+    "minmax_macro": {
+      "pass": 1,
+      "total": 1
+    },
+    "union_aliasing": {
+      "pass": 2,
+      "total": 2
+    },
+    "fnptr_tracking": {
+      "pass": 3,
+      "total": 3
+    },
+    "macro_expansion": {
+      "pass": 2,
+      "total": 2
+    },
+    "ptr_arith_tracking": {
+      "pass": 3,
+      "total": 3
+    },
+    "callback_tracking": {
+      "pass": 1,
+      "total": 1
+    },
+    "cast_tracking": {
+      "pass": 3,
+      "total": 3
+    },
+    "struct_array_indexing": {
+      "pass": 2,
+      "total": 2
+    },
+    "deep_call_chain": {
+      "pass": 1,
+      "total": 1
+    },
+    "mutual_recursion": {
+      "pass": 1,
+      "total": 1
+    },
+    "conditional_alias": {
+      "pass": 1,
+      "total": 1
+    },
+    "linked_list_tracking": {
+      "pass": 1,
+      "total": 1
+    },
+    "dynamic_index": {
+      "pass": 1,
+      "total": 1
+    },
+    "cpp_virtual_dispatch": {
+      "pass": 2,
+      "total": 2
+    },
+    "ifdef_both_branches": {
+      "pass": 3,
+      "total": 3
+    },
+    "multi_callback_array": {
+      "pass": 2,
+      "total": 2
+    },
+    "bitfield_typepun": {
+      "pass": 1,
+      "total": 1
+    },
+    "flexible_array_member": {
+      "pass": 1,
+      "total": 1
+    },
+    "container_of_alias": {
+      "pass": 2,
+      "total": 2
+    },
+    "goto_reaching_def": {
+      "pass": 2,
+      "total": 2
+    },
+    "memcpy_bulk_copy": {
+      "pass": 2,
+      "total": 2
+    }
+  }
 }

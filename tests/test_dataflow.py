@@ -624,6 +624,20 @@ class TestFnptrLocalAlias:
         pytest.fail("fnptr local alias mode path not traced")
 
 
+class TestIsErrGuard:
+    """G2: IS_ERR-guarded pointer source. Tainted value flows through a
+    guarded handle to a sink."""
+
+    def test_is_err_regmap_write(self, analysis_db):
+        _, _, paths = analysis_db
+        for p in paths:
+            if ("cfg->ctrl" in p.source.variable
+                    and "regmap_write" in p.sink.variable
+                    and p.sink.function == "g2_probe"):
+                return
+        pytest.fail("IS_ERR-guarded regmap_write path not traced")
+
+
 class TestAliasingAdvanced:
     """P2: conditional alias, linked-list walk, dynamic-index sinks."""
 
