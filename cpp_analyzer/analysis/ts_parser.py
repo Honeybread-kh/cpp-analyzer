@@ -671,6 +671,58 @@ def extract_all_assignments(root: Node) -> list[dict]:
     return results
 
 
+def extract_fnptr_table_entries(root: Node) -> list[dict]:
+    """Extract static fnptr-table entries from top-level declarations.
+
+    Handles `static f_t arr[] = { [IDX] = func, ... };` designated-init
+    tables and `static f_t arr[] = { func_a, func_b, ... };` positional
+    tables. Returns list of {array_name, callee}.
+    """
+    results = []
+
+    def walk(node: Node, in_func: bool):
+        if node.type == "function_definition":
+            return  # skip function bodies
+        if node.type in ("init_declarator", "declaration"):
+            # look for `name [ ] = { ... }` pattern
+            decl = None
+            value = None
+            if node.type == "init_declarator":
+                decl = node.child_by_field_name("declarator")
+                value = node.child_by_field_name("value")
+            if decl is not None and value is not None and value.type == "initializer_list":
+                array_name = None
+                d = decl
+                # unwrap array_declarator / pointer_declarator
+                while d is not None:
+                    if d.type == "identifier":
+                        array_name = node_text(d).strip()
+                        break
+                    inner = d.child_by_field_name("declarator")
+                    if inner is None:
+                        break
+                    d = inner
+                if array_name:
+                    for pair in walk_type(value, "initializer_pair"):
+                        val = pair.child_by_field_name("value")
+                        if val is not None:
+                            expr = node_text(val).strip().lstrip("&")
+                            if re.fullmatch(r'[A-Za-z_]\w*', expr):
+                                results.append({"array_name": array_name, "callee": expr})
+                    # positional entries: direct identifiers in the list
+                    for child in value.named_children:
+                        if child.type == "identifier":
+                            expr = node_text(child).strip()
+                            if re.fullmatch(r'[A-Za-z_]\w*', expr):
+                                results.append({"array_name": array_name, "callee": expr})
+        for c in node.children:
+            walk(c, in_func)
+
+    import re
+    walk(root, False)
+    return results
+
+
 def extract_function_returns(root: Node) -> list[dict]:
     """Extract return statements from each function definition.
 

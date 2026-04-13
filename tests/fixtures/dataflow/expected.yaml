@@ -643,6 +643,26 @@ paths:
     difficulty: hard
 
   # ══════════════════════════════════════════════════════
+  # F3: fnptr ops table indexed by enum constant
+  # ══════════════════════════════════════════════════════
+
+  - name: "fnptr ops timing"
+    source: "cfg->freq"
+    sink: "F3_TIMING_REG"
+    expected_function: "f3_do_timing"
+    requires: fnptr_indexed_table
+    min_depth: 2
+    difficulty: hard
+
+  - name: "fnptr ops mode"
+    source: "cfg->mode"
+    sink: "F3_MODE_REG"
+    expected_function: "f3_do_mode"
+    requires: fnptr_indexed_table
+    min_depth: 2
+    difficulty: hard
+
+  # ══════════════════════════════════════════════════════
   # F1: MMIO accessor function sinks
 
   - name: "writel timing sink"

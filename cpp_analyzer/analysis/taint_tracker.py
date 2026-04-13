@@ -253,6 +253,13 @@ class TaintTracker:
                 if not any(p.pattern == macro_pat.pattern for p in self._compiled_sinks):
                     self._compiled_sinks.append(macro_pat)
 
+            # F3: static fnptr table with designated-init entries.
+            for entry in ts_parser.extract_fnptr_table_entries(root):
+                self._fnptr_table_entries_pending = getattr(
+                    self, "_fnptr_table_entries_pending", []
+                )
+                self._fnptr_table_entries_pending.append(entry)
+
             self._file_assignments[rp] = assignments
             self._file_calls[rp] = calls
             self._file_params[rp] = params
@@ -330,6 +337,13 @@ class TaintTracker:
                         expr = arg["expression"].strip().lstrip("&")
                         if expr in self._func_to_file:
                             self._fnptr_array_elements.setdefault(arr_base, set()).add(expr)
+
+        # F3: populate fnptr table entries from static designated-init tables
+        for entry in getattr(self, "_fnptr_table_entries_pending", []):
+            if entry["callee"] in self._func_to_file:
+                self._fnptr_array_elements.setdefault(entry["array_name"], set()).add(
+                    entry["callee"]
+                )
 
     def _scan_sinks(self) -> list[dict]:
         """Find all assignments whose LHS matches a sink pattern."""

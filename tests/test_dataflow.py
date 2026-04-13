@@ -452,6 +452,31 @@ class TestMultiCallback:
         pytest.fail("Flexible-array-member sink path not traced")
 
 
+class TestFnptrIndexedTable:
+    """F3: static fnptr ops table indexed by enum constant. Dispatch
+    `ops[OP_X](cfg, r)` should link to the callee registered at OP_X."""
+
+    def test_ops_timing(self, analysis_db):
+        _, _, paths = analysis_db
+        for p in paths:
+            if ("cfg->freq" in p.source.variable
+                    and "F3_TIMING_REG" in p.sink.variable):
+                funcs = {p.sink.function} | {s.function for s in p.steps}
+                if "f3_do_timing" in funcs:
+                    return
+        pytest.fail("fnptr ops table timing dispatch not traced")
+
+    def test_ops_mode(self, analysis_db):
+        _, _, paths = analysis_db
+        for p in paths:
+            if ("cfg->mode" in p.source.variable
+                    and "F3_MODE_REG" in p.sink.variable):
+                funcs = {p.sink.function} | {s.function for s in p.steps}
+                if "f3_do_mode" in funcs:
+                    return
+        pytest.fail("fnptr ops table mode dispatch not traced")
+
+
 class TestDesignatedInit:
     """F2: compound literal `(T){.field = X}` passed as arg — field-taint
     must flow to the callee's struct-field read."""
