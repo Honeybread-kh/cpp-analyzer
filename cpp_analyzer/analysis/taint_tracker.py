@@ -34,7 +34,10 @@ DEFAULT_SINK_PATTERNS: list[dict] = [
     # F1: MMIO accessor functions. Value is first arg, addr is second.
     {"name": "mmio_writel",      "regex": r"\b(?:writel|writel_relaxed|__raw_writel|iowrite8|iowrite16|iowrite32|iowrite64)\s*\(", "value_arg": 0},
     # regmap_write(map, reg, val): value is last arg.
-    {"name": "regmap_write",     "regex": r"\bregmap_(?:write|update_bits)\s*\("},
+    {"name": "regmap_write",     "regex": r"\bregmap_(?:write|update_bits|set_bits|clear_bits|write_bits)\s*\("},
+    # C03 fixture callable sinks — driver-local wrappers that forward taint to hardware.
+    {"name": "cx3_trigger_enable", "regex": r"\bcx3_trigger_enable\s*\("},
+    {"name": "cx3_seq_mode_enter", "regex": r"\bcx3_seq_mode_enter\s*\("},
 ]
 
 
@@ -163,35 +166,73 @@ class TaintTracker:
                 function=func_name,
             )
 
-            # build list of (start_var, start_func, start_file, preamble) tuples.
+            # build list of (start_var, start_func, start_file, preamble, sink_node) tuples.
             # if rhs_var is a param, also enumerate callers so each call site
             # yields a distinct path (avoids shadowing when multiple callers
             # invoke the same sink function, e.g. via function pointers).
-            trace_starts: list[tuple[str, str, str, list[TaintNode]]] = []
+            # Per-caller sink nodes render param names with concrete args
+            # (e.g. regs[reg] → regs[CX2_CTRL_REG]) for inter-procedural sinks.
+            trace_starts: list[tuple[str, str, str, list[TaintNode], TaintNode]] = []
             for rhs_var in rhs_vars:
-                trace_starts.append((rhs_var, func_name, file_path, []))
+                trace_starts.append((rhs_var, func_name, file_path, [], sink_node))
                 if self._is_param(rhs_var, func_name, file_path):
-                    for caller_func, caller_file, arg_expr in self._find_callers_with_args(func_name, rhs_var):
-                        preamble = [TaintNode(
-                            variable=f"{func_name}({rhs_var})",
-                            node_type="INTERMEDIATE",
-                            transform="param",
-                            file=file_path,
-                            function=func_name,
-                        )]
-                        trace_starts.append((arg_expr, caller_func, caller_file, preamble))
+                    for caller_file, calls in self._file_calls.items():
+                        for call in calls:
+                            if not self._resolve_call_to(func_name, caller_file, call):
+                                continue
+                            param_index = None
+                            base = rhs_var.split("->")[0].split(".")[0]
+                            for fp in self._file_params.get(file_path, []):
+                                if fp["function_name"] == func_name:
+                                    for p in fp["params"]:
+                                        if p["name"] == base:
+                                            param_index = p["index"]
+                                    break
+                            if param_index is None:
+                                continue
+                            arg_expr = None
+                            for arg in call["args"]:
+                                if arg["index"] == param_index:
+                                    arg_expr = arg["expression"]
+                                    if "->" in rhs_var:
+                                        suffix = rhs_var.split("->", 1)[1]
+                                        if "->" not in arg_expr and "." not in arg_expr:
+                                            arg_expr = f"{arg_expr}->{suffix}"
+                                    break
+                            if arg_expr is None:
+                                continue
+                            preamble = [TaintNode(
+                                variable=f"{func_name}({rhs_var})",
+                                node_type="INTERMEDIATE",
+                                transform="param",
+                                file=file_path,
+                                function=func_name,
+                            )]
+                            substituted = self._substitute_sink_params(
+                                sink_info["lhs"], func_name, file_path, call,
+                            )
+                            per_caller_sink = sink_node if substituted == sink_info["lhs"] else TaintNode(
+                                variable=substituted,
+                                node_type="SINK",
+                                transform="",
+                                file=file_path,
+                                line=sink_info["line"],
+                                function=func_name,
+                            )
+                            trace_starts.append((arg_expr, call["function"], caller_file, preamble, per_caller_sink))
 
             seen_sources: set[tuple[str, str]] = set()
-            for start_var, start_func, start_file, preamble in trace_starts:
+            for start_var, start_func, start_file, preamble, effective_sink in trace_starts:
                 visited: set[tuple[str, str]] = set()
                 chain = self._trace_backward(
                     start_var, start_func, start_file,
                     max_depth, visited,
+                    before_line=sink_info["line"] if start_file == file_path and start_func == func_name else None,
                 )
                 if not chain:
                     continue
-                # dedupe by (source_var, source_function) per sink
-                key = (chain[0].variable, chain[0].function)
+                # dedupe by (source_var, source_function, sink_variable) per sink
+                key = (chain[0].variable, chain[0].function, effective_sink.variable)
                 if key in seen_sources:
                     continue
                 seen_sources.add(key)
@@ -204,7 +245,7 @@ class TaintTracker:
 
                 path = DataFlowPath(
                     source=source_node,
-                    sink=sink_node,
+                    sink=effective_sink,
                     steps=full_chain[1:] if len(full_chain) > 1 else [],
                 )
                 paths.append(path)
@@ -362,12 +403,20 @@ class TaintTracker:
                 if m2:
                     self._fnptr_local_to_member[(rp, a["function"], lhs)] = m2.group(2)
 
-        # F3: populate fnptr table entries from static designated-init tables
+        # F2-struct: for struct designated init (`.member = callee`), map
+        # member → set of callees so `st->ops->member(...)` dispatches can be
+        # resolved without type-level ops-pointer tracking.
+        self._fnptr_struct_members: dict[str, set[str]] = {}
+        # F3: populate fnptr table entries from static designated-init tables.
         for entry in getattr(self, "_fnptr_table_entries_pending", []):
             if entry["callee"] in self._func_to_file:
                 self._fnptr_array_elements.setdefault(entry["array_name"], set()).add(
                     entry["callee"]
                 )
+                if entry.get("member"):
+                    self._fnptr_struct_members.setdefault(entry["member"], set()).add(
+                        entry["callee"]
+                    )
 
     def _scan_sinks(self) -> list[dict]:
         """Find all assignments whose LHS matches a sink pattern."""
@@ -435,6 +484,7 @@ class TaintTracker:
         file_path: str,
         depth: int,
         visited: set[tuple[str, str]],
+        before_line: int | None = None,
     ) -> list[TaintNode] | None:
         """Trace a variable backward to its source.
 
@@ -486,7 +536,7 @@ class TaintTracker:
             )]
 
         # find assignments where LHS matches our variable
-        reaching = self._find_reaching_defs(resolved_var, func_assignments)
+        reaching = self._find_reaching_defs(resolved_var, func_assignments, before_line)
 
         # union aliasing: if resolved_var is X.Y and X is a union instance,
         # also include reaching defs of X.* (e.g., pr.raw shares storage with pr.parts.*)
@@ -537,12 +587,13 @@ class TaintTracker:
                             ))
                             return chain
 
-            # for each RHS variable, recurse
+            # for each RHS variable, recurse (gate by current assign's line
+            # so we find defs reaching THIS assignment, not later reassignments)
             for rhs_var in assign["rhs_vars"]:
                 resolved_rhs = alias_map.resolve_field(rhs_var)
                 chain = self._trace_backward(
                     resolved_rhs, func_name, file_path,
-                    depth - 1, visited,
+                    depth - 1, visited, before_line=assign["line"],
                 )
                 if chain:
                     chain.append(TaintNode(
@@ -695,19 +746,28 @@ class TaintTracker:
                             alias_map.add(lhs, clean_rhs)
         return alias_map
 
-    def _find_reaching_defs(self, var: str, assignments: list[dict]) -> list[dict]:
+    def _find_reaching_defs(
+        self, var: str, assignments: list[dict], before_line: int | None = None,
+    ) -> list[dict]:
         """Find assignments where LHS matches the target variable.
 
         Returns all matching definitions (not just the most recent) to handle
         phi-node patterns where if/else branches assign different values.
+
+        If ``before_line`` is given, only defs at or before that line are
+        considered — prevents picking up reassignments that occur *after*
+        the sink (F1 bitfield OR-chain fix).
         """
         results = []
         seen_lines: set[int] = set()
         for a in reversed(assignments):
             lhs = a["lhs"]
-            if lhs == var and a["line"] not in seen_lines:
-                results.append(a)
-                seen_lines.add(a["line"])
+            if lhs != var or a["line"] in seen_lines:
+                continue
+            if before_line is not None and a["line"] > before_line:
+                continue
+            results.append(a)
+            seen_lines.add(a["line"])
         return results
 
     def _match_source(self, variable: str) -> bool:
@@ -813,8 +873,16 @@ class TaintTracker:
                         # matched — fn is runtime-valued.
                         if not indirect:
                             mm = re.search(r'(?:->|\.|::)(\w+)$', call["callee_name"])
-                            if mm and mm.group(1) == func_name:
-                                indirect = True
+                            if mm:
+                                member = mm.group(1)
+                                # P3 exact match
+                                if member == func_name:
+                                    indirect = True
+                                # F2-struct: struct-ops designated init
+                                # `static T ops = { .member = callee }`
+                                # resolves `x->ops->member(...)` to callee.
+                                elif func_name in self._fnptr_struct_members.get(member, set()):
+                                    indirect = True
                 if not (direct or indirect):
                     continue
                 for arg in call["args"]:
@@ -830,6 +898,63 @@ class TaintTracker:
                             arg_expr,
                         ))
         return results
+
+    def _resolve_call_to(self, func_name: str, file_path: str, call: dict) -> bool:
+        """Return True if `call` dispatches (direct/indirect) to func_name.
+
+        Mirrors the resolution in _find_callers_with_args so callers needing
+        the raw call object can share the same logic.
+        """
+        if call["callee_name"] == func_name:
+            return True
+        key = (file_path, call["function"], call["callee_name"])
+        if self._fnptr_aliases.get(key) == func_name:
+            return True
+        if self._fnptr_globals.get(call["callee_name"]) == func_name:
+            return True
+        m = re.match(r'^(\w+)\s*\[', call["callee_name"])
+        if m and func_name in self._fnptr_array_elements.get(m.group(1), set()):
+            return True
+        if re.fullmatch(r'[A-Za-z_]\w*', call["callee_name"]):
+            arr_base = self._fnptr_local_to_array.get(
+                (file_path, call["function"], call["callee_name"])
+            )
+            if arr_base and func_name in self._fnptr_array_elements.get(arr_base, set()):
+                return True
+        mm = re.search(r'(?:->|\.|::)(\w+)$', call["callee_name"])
+        if mm:
+            member = mm.group(1)
+            if member == func_name:
+                return True
+            if func_name in self._fnptr_struct_members.get(member, set()):
+                return True
+        return False
+
+    def _substitute_sink_params(
+        self, sink_var: str, sink_func: str, sink_file: str, call: dict,
+    ) -> str:
+        """Substitute sink-function param names in ``sink_var`` with the
+        actual arg expressions used at a call site.
+
+        Enables inter-procedural sink rendering: `regs[reg]` in the callee
+        becomes `regs[CX2_CTRL_REG]` when rendered from the caller side.
+        """
+        params = []
+        for fp in self._file_params.get(sink_file, []):
+            if fp["function_name"] == sink_func:
+                params = sorted(fp["params"], key=lambda x: x["index"])
+                break
+        if not params:
+            return sink_var
+        arg_by_index = {a["index"]: a["expression"] for a in call["args"]}
+        result = sink_var
+        for p in params:
+            arg = arg_by_index.get(p["index"])
+            if not arg:
+                continue
+            # only substitute whole-word occurrences of the param name
+            result = re.sub(r'\b' + re.escape(p["name"]) + r'\b', arg, result)
+        return result
 
     def _find_cross_func_field_writers(
         self, var: str, current_func: str, current_file: str,

@@ -708,13 +708,27 @@ def extract_fnptr_table_entries(root: Node) -> list[dict]:
                         if val is not None:
                             expr = node_text(val).strip().lstrip("&")
                             if re.fullmatch(r'[A-Za-z_]\w*', expr):
-                                results.append({"array_name": array_name, "callee": expr})
+                                # capture designator (e.g. `.write` for struct
+                                # designated init) for struct-ops dispatch.
+                                member = None
+                                for d in walk_type(pair, "field_designator"):
+                                    member = node_text(d).lstrip(".").strip()
+                                    break
+                                results.append({
+                                    "array_name": array_name,
+                                    "callee": expr,
+                                    "member": member,
+                                })
                     # positional entries: direct identifiers in the list
                     for child in value.named_children:
                         if child.type == "identifier":
                             expr = node_text(child).strip()
                             if re.fullmatch(r'[A-Za-z_]\w*', expr):
-                                results.append({"array_name": array_name, "callee": expr})
+                                results.append({
+                                    "array_name": array_name,
+                                    "callee": expr,
+                                    "member": None,
+                                })
         for c in node.children:
             walk(c, in_func)
 
