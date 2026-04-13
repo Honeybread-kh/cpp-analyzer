@@ -55,6 +55,9 @@ def analysis_db():
         {"name": "REG_WRITE", "regex": r"REG_WRITE\s*\("},
         {"name": "volatile_mmio", "regex": r"\*\s*\(\s*volatile"},
         {"name": "ptr_deref", "regex": r"^\s*\*\s*\(?\s*\w+"},
+        # F1: MMIO accessor functions — value arg differs per callee.
+        {"name": "mmio_writel",  "regex": r"\b(?:writel|writel_relaxed|__raw_writel|iowrite8|iowrite16|iowrite32|iowrite64)\s*\(", "value_arg": 0},
+        {"name": "regmap_write", "regex": r"\bregmap_(?:write|update_bits)\s*\("},
     ]
 
     tracker = TaintTracker(repo, pid, source_patterns, sink_patterns)
@@ -447,6 +450,37 @@ class TestMultiCallback:
                     and p.sink.function == "p5_fam_write"):
                 return
         pytest.fail("Flexible-array-member sink path not traced")
+
+
+class TestMmioAccessor:
+    """F1: kernel MMIO accessor (writel/iowrite32/regmap_write) as sink."""
+
+    def test_writel_timing(self, analysis_db):
+        _, _, paths = analysis_db
+        for p in paths:
+            if ("fcfg->freq" in p.source.variable
+                    and "writel" in p.sink.variable
+                    and p.sink.function == "f1_writel_timing"):
+                return
+        pytest.fail("writel timing sink not traced")
+
+    def test_iowrite32_mode(self, analysis_db):
+        _, _, paths = analysis_db
+        for p in paths:
+            if ("fcfg->mode" in p.source.variable
+                    and "iowrite32" in p.sink.variable
+                    and p.sink.function == "f1_iowrite32_mode"):
+                return
+        pytest.fail("iowrite32 mode sink not traced")
+
+    def test_regmap_write_flags(self, analysis_db):
+        _, _, paths = analysis_db
+        for p in paths:
+            if ("fcfg->flags" in p.source.variable
+                    and "regmap_write" in p.sink.variable
+                    and p.sink.function == "f1_regmap_flags"):
+                return
+        pytest.fail("regmap_write flags sink not traced")
 
 
 class TestContainerOf:

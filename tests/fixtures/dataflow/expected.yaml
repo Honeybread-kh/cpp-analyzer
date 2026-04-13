@@ -623,6 +623,33 @@ paths:
     difficulty: hard
 
   # ══════════════════════════════════════════════════════
+  # F1: MMIO accessor function sinks
+
+  - name: "writel timing sink"
+    source: "fcfg->freq"
+    sink: "writel"
+    expected_function: "f1_writel_timing"
+    requires: mmio_accessor
+    min_depth: 1
+    difficulty: medium
+
+  - name: "iowrite32 mode sink"
+    source: "fcfg->mode"
+    sink: "iowrite32"
+    expected_function: "f1_iowrite32_mode"
+    requires: mmio_accessor
+    min_depth: 1
+    difficulty: medium
+
+  - name: "regmap_write flags sink"
+    source: "fcfg->flags"
+    sink: "regmap_write"
+    expected_function: "f1_regmap_flags"
+    requires: mmio_accessor
+    min_depth: 1
+    difficulty: medium
+
+  # ══════════════════════════════════════════════════════
   # B2: container_of / offsetof structural alias
   # ══════════════════════════════════════════════════════
 

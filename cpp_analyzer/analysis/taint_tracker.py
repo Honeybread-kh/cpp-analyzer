@@ -31,6 +31,10 @@ DEFAULT_SINK_PATTERNS: list[dict] = [
     {"name": "SET_SWI_FIELD",    "regex": r"SET_SWI_FIELD\s*\("},
     {"name": "reg_arrow_assign", "regex": r"(?:reg|regs|hw_reg)\w*->(\w+)\s*="},
     {"name": "reg_dot_assign",   "regex": r"(?:reg|regs|hw_reg)\w*\.(\w+)\s*="},
+    # F1: MMIO accessor functions. Value is first arg, addr is second.
+    {"name": "mmio_writel",      "regex": r"\b(?:writel|writel_relaxed|__raw_writel|iowrite8|iowrite16|iowrite32|iowrite64)\s*\(", "value_arg": 0},
+    # regmap_write(map, reg, val): value is last arg.
+    {"name": "regmap_write",     "regex": r"\bregmap_(?:write|update_bits)\s*\("},
 ]
 
 
@@ -354,23 +358,30 @@ class TaintTracker:
                     continue
                 for call in calls:
                     callee = call["callee_name"]
-                    for pattern in self._compiled_sinks:
+                    for idx, pattern in enumerate(self._compiled_sinks):
                         call_text = f"{callee}({', '.join(a['expression'] for a in call['args'])})"
                         if pattern.search(call_text):
-                            # the value being written is typically the last arg
                             rhs_args = call["args"]
-                            rhs_vars = []
-                            for arg in rhs_args:
-                                rhs_vars.extend(
-                                    ts_parser._extract_variables(
-                                        ts_parser.parse_bytes(arg["expression"].encode())
-                                    )
-                                    if arg["expression"] else []
-                                )
+                            # F1: some sinks specify which arg carries the value.
+                            raw = self.sink_patterns[idx] if idx < len(self.sink_patterns) else {}
+                            value_arg_idx = raw.get("value_arg", -1) if isinstance(raw, dict) else -1
+                            if not rhs_args:
+                                value_arg = None
+                            else:
+                                try:
+                                    value_arg = rhs_args[value_arg_idx]
+                                except IndexError:
+                                    value_arg = rhs_args[-1]
+                            if value_arg and value_arg["expression"]:
+                                rhs_vars = ts_parser._extract_variables(
+                                    ts_parser.parse_bytes(value_arg["expression"].encode())
+                                ) or [value_arg["expression"]]
+                            else:
+                                rhs_vars = []
                             sinks.append({
                                 "lhs": call_text[:100],
-                                "sink_var": rhs_args[-1]["expression"] if rhs_args else "",
-                                "rhs_vars": rhs_vars or [rhs_args[-1]["expression"]] if rhs_args else [],
+                                "sink_var": value_arg["expression"] if value_arg else "",
+                                "rhs_vars": rhs_vars,
                                 "line": call["line"],
                                 "function": call["function"],
                                 "file": file_path,

@@ -1,8 +1,8 @@
 {
-  "score": 153,
-  "max_score": 153,
+  "score": 159,
+  "max_score": 159,
   "pct": 100.0,
-  "total_paths_found": 83,
+  "total_paths_found": 88,
   "results": [
     {
       "name": "direct threshold",
@@ -363,6 +363,24 @@
       "difficulty": "hard",
       "status": "PASS",
       "requires": "flexible_array_member"
+    },
+    {
+      "name": "writel timing sink",
+      "difficulty": "medium",
+      "status": "PASS",
+      "requires": "mmio_accessor"
+    },
+    {
+      "name": "iowrite32 mode sink",
+      "difficulty": "medium",
+      "status": "PASS",
+      "requires": "mmio_accessor"
+    },
+    {
+      "name": "regmap_write flags sink",
+      "difficulty": "medium",
+      "status": "PASS",
+      "requires": "mmio_accessor"
     },
     {
       "name": "container_of frequency",
