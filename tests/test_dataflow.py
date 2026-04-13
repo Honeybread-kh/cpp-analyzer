@@ -57,7 +57,10 @@ def analysis_db():
         {"name": "ptr_deref", "regex": r"^\s*\*\s*\(?\s*\w+"},
         # F1: MMIO accessor functions — value arg differs per callee.
         {"name": "mmio_writel",  "regex": r"\b(?:writel|writel_relaxed|__raw_writel|iowrite8|iowrite16|iowrite32|iowrite64)\s*\(", "value_arg": 0},
-        {"name": "regmap_write", "regex": r"\bregmap_(?:write|update_bits)\s*\("},
+        {"name": "regmap_write", "regex": r"\bregmap_(?:write|update_bits|set_bits|clear_bits|write_bits)\s*\("},
+        # C03 driver-local callable sinks (goto_ladder_unwind fixture).
+        {"name": "cx3_trigger_enable", "regex": r"\bcx3_trigger_enable\s*\("},
+        {"name": "cx3_seq_mode_enter", "regex": r"\bcx3_seq_mode_enter\s*\("},
     ]
 
     tracker = TaintTracker(repo, pid, source_patterns, sink_patterns)
@@ -650,6 +653,83 @@ class TestForwardWrapper:
                     and p.sink.function == "g3_log_core"):
                 return
         pytest.fail("forward-wrapper path not traced")
+
+
+class TestC01BitfieldPackBulk:
+    """C01: 7-field FIELD_PREP bitpack + regmap_write + memcpy bulk replicate
+    — curator-mined frontier."""
+
+    def test_bitfield_pack_regmap_write(self, analysis_db):
+        _, _, paths = analysis_db
+        for p in paths:
+            if ("cfg->pga" in p.source.variable
+                    and "regmap_write" in p.sink.variable
+                    and p.sink.function == "cx1_apply_setup"):
+                return
+        pytest.fail("C01 bitfield_pack_bulk pga→regmap_write — frontier not yet covered")
+
+    def test_bitfield_pack_memcpy_bulk(self, analysis_db):
+        _, _, paths = analysis_db
+        for p in paths:
+            if ("cfg->filter_type" in p.source.variable
+                    and p.sink.function == "cx1_apply_setup"):
+                return
+        pytest.fail("C01 bitfield_pack_bulk filter_type→memcpy bulk — frontier not yet covered")
+
+
+class TestC02FnptrStructOps:
+    """C02: designated-init struct-ops fnptr dispatch table
+    — curator-mined frontier."""
+
+    def test_struct_ops_ctrl(self, analysis_db):
+        _, _, paths = analysis_db
+        for p in paths:
+            if ("cfg->ctrl" in p.source.variable
+                    and "CX2_CTRL_REG" in p.sink.variable
+                    and p.sink.function == "cx2_mmio_write"):
+                return
+        pytest.fail("C02 fnptr_struct_ops ctrl dispatch — frontier not yet covered")
+
+    def test_struct_ops_sample(self, analysis_db):
+        _, _, paths = analysis_db
+        for p in paths:
+            if ("cfg->sample" in p.source.variable
+                    and "CX2_SAMPLE_REG" in p.sink.variable
+                    and p.sink.function == "cx2_mmio_write"):
+                return
+        pytest.fail("C02 fnptr_struct_ops sample dispatch — frontier not yet covered")
+
+
+class TestC03GotoLadderUnwind:
+    """C03: 3-label goto unwind ladder with staged MMIO sinks
+    — curator-mined frontier."""
+
+    def test_goto_ladder_stage1(self, analysis_db):
+        _, _, paths = analysis_db
+        for p in paths:
+            if ("cfg->gp_mode" in p.source.variable
+                    and "regmap_set_bits" in p.sink.variable
+                    and p.sink.function == "cx3_postenable"):
+                return
+        pytest.fail("C03 goto_ladder_unwind stage1 gp_mode→regmap_set_bits — frontier not yet covered")
+
+    def test_goto_ladder_stage2(self, analysis_db):
+        _, _, paths = analysis_db
+        for p in paths:
+            if ("cfg->trig_mask" in p.source.variable
+                    and "cx3_trigger_enable" in p.sink.variable
+                    and p.sink.function == "cx3_postenable"):
+                return
+        pytest.fail("C03 goto_ladder_unwind stage2 trig_mask→trigger_enable — frontier not yet covered")
+
+    def test_goto_ladder_stage3(self, analysis_db):
+        _, _, paths = analysis_db
+        for p in paths:
+            if ("cfg->seq_mode" in p.source.variable
+                    and "cx3_seq_mode_enter" in p.sink.variable
+                    and p.sink.function == "cx3_postenable"):
+                return
+        pytest.fail("C03 goto_ladder_unwind stage3 seq_mode→seq_mode_enter — frontier not yet covered")
 
 
 class TestAliasingAdvanced:

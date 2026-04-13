@@ -793,6 +793,74 @@ paths:
     min_depth: 3
     difficulty: medium
 
+  # ══════════════════════════════════════════════════════
+  # C01: 7-field FIELD_PREP bitpack + regmap_write + memcpy bulk replicate
+  # ══════════════════════════════════════════════════════
+
+  - name: "bitfield pack fanout regmap_write"
+    source: "cfg->pga"
+    sink: "regmap_write"
+    expected_function: "cx1_apply_setup"
+    requires: bitfield_pack_bulk
+    min_depth: 2
+    difficulty: hard
+
+  - name: "bitfield pack memcpy bulk replicate"
+    source: "cfg->filter_type"
+    sink: "dst"
+    expected_function: "cx1_apply_setup"
+    requires: bitfield_pack_bulk
+    min_depth: 2
+    difficulty: hard
+
+  # ══════════════════════════════════════════════════════
+  # C02: designated-init struct-ops fnptr dispatch table
+  # ══════════════════════════════════════════════════════
+
+  - name: "struct ops fnptr dispatch ctrl"
+    source: "cfg->ctrl"
+    sink: "hw->regs[CX2_CTRL_REG]"
+    expected_function: "cx2_mmio_write"
+    requires: fnptr_struct_ops
+    min_depth: 3
+    difficulty: hard
+
+  - name: "struct ops fnptr dispatch sample"
+    source: "cfg->sample"
+    sink: "hw->regs[CX2_SAMPLE_REG]"
+    expected_function: "cx2_mmio_write"
+    requires: fnptr_struct_ops
+    min_depth: 3
+    difficulty: hard
+
+  # ══════════════════════════════════════════════════════
+  # C03: 3-label goto unwind ladder with staged MMIO sinks
+  # ══════════════════════════════════════════════════════
+
+  - name: "goto ladder stage1 regmap_set_bits"
+    source: "cfg->gp_mode"
+    sink: "regmap_set_bits"
+    expected_function: "cx3_postenable"
+    requires: goto_ladder_unwind
+    min_depth: 1
+    difficulty: hard
+
+  - name: "goto ladder stage2 trigger_enable"
+    source: "cfg->trig_mask"
+    sink: "cx3_trigger_enable"
+    expected_function: "cx3_postenable"
+    requires: goto_ladder_unwind
+    min_depth: 1
+    difficulty: hard
+
+  - name: "goto ladder stage3 seq_mode_enter"
+    source: "cfg->seq_mode"
+    sink: "cx3_seq_mode_enter"
+    expected_function: "cx3_postenable"
+    requires: goto_ladder_unwind
+    min_depth: 1
+    difficulty: hard
+
 # Scoring: each found path = 1 point
 # Difficulty multiplier: easy=1, medium=2, hard=3
 # Total possible score: sum of all (1 * multiplier)
