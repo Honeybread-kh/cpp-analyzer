@@ -638,6 +638,20 @@ class TestIsErrGuard:
         pytest.fail("IS_ERR-guarded regmap_write path not traced")
 
 
+class TestForwardWrapper:
+    """G3: 1-hop forwarding wrapper that passes taint verbatim to a
+    sink-writing core function."""
+
+    def test_forward_wrapper(self, analysis_db):
+        _, _, paths = analysis_db
+        for p in paths:
+            if ("cfg->debug" in p.source.variable
+                    and "G3_DBG_REG" in p.sink.variable
+                    and p.sink.function == "g3_log_core"):
+                return
+        pytest.fail("forward-wrapper path not traced")
+
+
 class TestAliasingAdvanced:
     """P2: conditional alias, linked-list walk, dynamic-index sinks."""
 

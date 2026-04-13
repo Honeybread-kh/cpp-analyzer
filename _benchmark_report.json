@@ -1,8 +1,8 @@
 {
-  "score": 179,
-  "max_score": 179,
+  "score": 181,
+  "max_score": 181,
   "pct": 100.0,
-  "total_paths_found": 112,
+  "total_paths_found": 113,
   "results": [
     {
       "name": "direct threshold",
@@ -459,6 +459,12 @@
       "difficulty": "medium",
       "status": "PASS",
       "requires": "is_err_guard"
+    },
+    {
+      "name": "1-hop forward wrapper",
+      "difficulty": "medium",
+      "status": "PASS",
+      "requires": "forward_wrapper"
     }
   ],
   "gaps": []
