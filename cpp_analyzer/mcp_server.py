@@ -98,6 +98,7 @@ def index_project(
     db_path: str | None = None,
     project_name: str | None = None,
     force: bool = False,
+    use_cache: bool = True,
 ) -> str:
     """
     Parse and index one or more C++ source directories into the analysis database.
@@ -143,7 +144,7 @@ def index_project(
     config_hits = 0
     if patterns:
         tracker     = ConfigTracker(repo, pid)
-        config_hits = tracker.scan_all()
+        config_hits = tracker.scan_all(use_cache=use_cache)
 
     repo.close()
 
@@ -613,6 +614,7 @@ def trace_dataflow(
     max_depth: int = 5,
     max_paths: int = 100,
     save: bool = False,
+    use_cache: bool = True,
 ) -> str:
     """
     Trace dataflow from config fields to register writes using taint analysis.
@@ -656,7 +658,7 @@ def trace_dataflow(
     if sink_pattern:
         sink_patterns = [{"name": "custom", "regex": sink_pattern}]
 
-    tracker = TaintTracker(repo, pid, source_patterns, sink_patterns)
+    tracker = TaintTracker(repo, pid, source_patterns, sink_patterns, use_cache=use_cache)
     paths = tracker.trace(max_depth=max_depth, max_paths=max_paths)
 
     if save and paths:
@@ -685,6 +687,7 @@ def reverse_trace_dataflow(
     project_id: int | None = None,
     max_depth: int = 5,
     max_paths: int = 100,
+    use_cache: bool = True,
 ) -> str:
     """
     Reverse trace: find all config sources that reach sinks matching a pattern.
@@ -725,7 +728,7 @@ def reverse_trace_dataflow(
     if source_pattern:
         source_patterns = [{"name": "custom", "regex": source_pattern}]
 
-    tracker = TaintTracker(repo, pid, source_patterns, sink_patterns)
+    tracker = TaintTracker(repo, pid, source_patterns, sink_patterns, use_cache=use_cache)
     grouped = tracker.reverse_trace(sink_pattern, max_depth=max_depth, max_paths=max_paths)
     repo.close()
 
@@ -755,6 +758,7 @@ def export_config_spec(
     project_id: int | None = None,
     max_depth: int = 5,
     include_language: bool = False,
+    use_cache: bool = True,
 ) -> str:
     """
     Export config field specifications with enum/range metadata.
@@ -804,7 +808,7 @@ def export_config_spec(
     if sink_pattern:
         sink_patterns_list = [{"name": "custom", "regex": sink_pattern}]
 
-    tracker = TaintTracker(repo, pid, source_patterns, sink_patterns_list)
+    tracker = TaintTracker(repo, pid, source_patterns, sink_patterns_list, use_cache=use_cache)
     paths = tracker.trace(max_depth=max_depth)
     specs = tracker.generate_config_specs(paths=paths)
 

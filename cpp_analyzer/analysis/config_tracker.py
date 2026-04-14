@@ -130,13 +130,34 @@ class ConfigTracker:
                     )
         return hits
 
-    def scan_all(self) -> int:
-        """Scan every file in the project. Returns total hit count."""
+    def scan_all(self, use_cache: bool = True) -> int:
+        """Scan every file in the project. Returns total hit count.
+
+        With use_cache=True, files whose file_hash matches the last recorded
+        scan_hash are skipped (their existing config_sources/config_usages
+        rows remain valid). Changed/new files invalidate prior rows for that
+        file before re-scan.
+        """
         files = self.repo.list_files(self.project_id)
+        scanned = self.repo.get_config_scan_state(self.project_id) if use_cache else {}
         total = 0
         for f in files:
+            fid = f["id"]
+            fhash = f["file_hash"]
+            if use_cache and fhash and scanned.get(fid) == fhash:
+                continue
+            # stale rows for this file must go before re-scan to avoid dups
+            self.repo._conn.execute(
+                "DELETE FROM config_usages WHERE file_id=?", (fid,)
+            )
+            self.repo._conn.execute(
+                "DELETE FROM config_sources WHERE file_id=?", (fid,)
+            )
+            self.repo._conn.commit()
             hits = self.scan_file(f["path"])
             total += len(hits)
+            if use_cache and fhash:
+                self.repo.mark_config_scanned(fid, fhash)
         return total
 
     # ── helpers ───────────────────────────────────────────────────────────────

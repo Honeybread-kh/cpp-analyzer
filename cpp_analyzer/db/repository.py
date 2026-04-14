@@ -582,6 +582,61 @@ class Repository:
             "SELECT * FROM files WHERE id=?", (file_id,)
         ).fetchone()
 
+    # ── parse entity cache ────────────────────────────────────────────────────
+
+    def get_parse_cache(self, file_id: int, file_hash: str) -> dict | None:
+        """Return cached entity payload if hash matches, else None."""
+        row = self._conn.execute(
+            "SELECT file_hash, payload FROM parse_cache WHERE file_id=?",
+            (file_id,),
+        ).fetchone()
+        if row is None or row["file_hash"] != file_hash:
+            return None
+        try:
+            return json.loads(row["payload"])
+        except (ValueError, TypeError):
+            return None
+
+    def upsert_parse_cache(
+        self, file_id: int, file_hash: str, payload: dict
+    ) -> None:
+        self._conn.execute(
+            """INSERT INTO parse_cache(file_id, file_hash, payload)
+                   VALUES(?,?,?)
+               ON CONFLICT(file_id) DO UPDATE SET
+                   file_hash=excluded.file_hash,
+                   payload=excluded.payload,
+                   created_at=CURRENT_TIMESTAMP""",
+            (file_id, file_hash, json.dumps(payload)),
+        )
+        self._conn.commit()
+
+    def invalidate_parse_cache(self, file_id: int) -> None:
+        self._conn.execute("DELETE FROM parse_cache WHERE file_id=?", (file_id,))
+        self._conn.commit()
+
+    # ── config scan state (hash-gate) ─────────────────────────────────────────
+
+    def get_config_scan_state(self, project_id: int) -> dict[int, str]:
+        rows = self._conn.execute(
+            """SELECT s.file_id, s.scan_hash FROM config_scan_state s
+                   JOIN files f ON f.id = s.file_id
+               WHERE f.project_id = ?""",
+            (project_id,),
+        ).fetchall()
+        return {r["file_id"]: r["scan_hash"] for r in rows}
+
+    def mark_config_scanned(self, file_id: int, scan_hash: str) -> None:
+        self._conn.execute(
+            """INSERT INTO config_scan_state(file_id, scan_hash)
+                   VALUES(?,?)
+               ON CONFLICT(file_id) DO UPDATE SET
+                   scan_hash=excluded.scan_hash,
+                   scanned_at=CURRENT_TIMESTAMP""",
+            (file_id, scan_hash),
+        )
+        self._conn.commit()
+
     # ── config patterns ───────────────────────────────────────────────────────
 
     def sync_config_patterns(self, patterns: list[dict]) -> None:

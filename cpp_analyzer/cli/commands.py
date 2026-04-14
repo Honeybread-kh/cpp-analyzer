@@ -94,8 +94,9 @@ def cli():
 @click.option("--name",         default=None,        help="Project name (default: first directory name)")
 @click.option("--patterns",     default=None,        help="config_patterns.yaml path")
 @click.option("--force",        is_flag=True,        help="Re-index all files even if unchanged")
+@click.option("--no-cache",     is_flag=True,        help="Bypass parse/config caches (force re-scan)")
 @click.option("--clang-args",   default="",          help="Extra clang args (comma-separated)")
-def index(directories, db, name, patterns, force, clang_args):
+def index(directories, db, name, patterns, force, no_cache, clang_args):
     """Parse and index one or more C++ source directories."""
     roots = [Path(d).resolve() for d in directories]
     project_name = name or roots[0].name
@@ -140,7 +141,7 @@ def index(directories, db, name, patterns, force, clang_args):
     if pattern_list:
         console.print("\n[cyan]Scanning for config usages...[/cyan]")
         tracker = ConfigTracker(repo, project_id)
-        total_hits = tracker.scan_all()
+        total_hits = tracker.scan_all(use_cache=not no_cache)
         console.print(f"  Config hits: {total_hits}")
 
     repo.close()
@@ -332,7 +333,8 @@ def trace_config(key, db, project_id, depth, chains):
 @click.option("--format",     "fmt", default="tree", type=click.Choice(["tree", "json"]),
               show_default=True, help="Output format")
 @click.option("--reverse",    default=None, help="Reverse trace: sink pattern regex to trace backward from")
-def trace_dataflow(db, project_id, patterns, source, sink, depth, max_paths, save, fmt, reverse):
+@click.option("--no-cache",   is_flag=True, help="Bypass parse_cache (re-parse all files)")
+def trace_dataflow(db, project_id, patterns, source, sink, depth, max_paths, save, fmt, reverse, no_cache):
     """Trace dataflow from config fields to register writes (taint analysis).
 
     Use --patterns to load source/sink patterns from a YAML file.
@@ -363,7 +365,7 @@ def trace_dataflow(db, project_id, patterns, source, sink, depth, max_paths, sav
     if sink:
         sink_patterns = [{"name": f"custom_{i}", "regex": s} for i, s in enumerate(sink)]
 
-    tracker = TaintTracker(repo, pid, source_patterns, sink_patterns)
+    tracker = TaintTracker(repo, pid, source_patterns, sink_patterns, use_cache=not no_cache)
 
     if reverse:
         with console.status("[bold green]Running reverse taint analysis..."):
@@ -449,7 +451,8 @@ def trace_dataflow(db, project_id, patterns, source, sink, depth, max_paths, sav
               show_default=True, help="Output format")
 @click.option("--output",     default=None, type=click.Path(), help="Output file path")
 @click.option("--language",   is_flag=True, help="Export full config constraint language (YAML)")
-def config_spec(db, project_id, patterns, source, sink, depth, fmt, output, language):
+@click.option("--no-cache",   is_flag=True, help="Bypass parse_cache (re-parse all files)")
+def config_spec(db, project_id, patterns, source, sink, depth, fmt, output, language, no_cache):
     """Export config field specifications with enum/range metadata.
 
     Runs dataflow analysis, generates ConfigFieldSpec for each struct field,
@@ -482,7 +485,7 @@ def config_spec(db, project_id, patterns, source, sink, depth, fmt, output, lang
         sink_patterns = [{"name": f"custom_{i}", "regex": s} for i, s in enumerate(sink)]
 
     with console.status("[bold green]Running dataflow analysis for config specs..."):
-        tracker = TaintTracker(repo, pid, source_patterns, sink_patterns)
+        tracker = TaintTracker(repo, pid, source_patterns, sink_patterns, use_cache=not no_cache)
         paths = tracker.trace(max_depth=depth)
         specs = tracker.generate_config_specs(paths=paths)
 

@@ -113,11 +113,15 @@ class TaintTracker:
         project_id: int,
         source_patterns: list[dict] | None = None,
         sink_patterns: list[dict] | None = None,
+        use_cache: bool = True,
     ):
         self.repo = repo
         self.project_id = project_id
         self.source_patterns = source_patterns or DEFAULT_SOURCE_PATTERNS
         self.sink_patterns = sink_patterns or DEFAULT_SINK_PATTERNS
+        self.use_cache = use_cache
+        self._cache_hits = 0
+        self._cache_misses = 0
 
         self._compiled_sources = [
             re.compile(p["regex"]) for p in self.source_patterns
@@ -263,39 +267,69 @@ class TaintTracker:
         # B2: parallel parse pre-warm. tree-sitter's C parser releases the GIL,
         # so parallel parse_file calls populate the module-level cache faster
         # than a serial loop. Subsequent extractors run serially (GIL-bound).
-        if len(source_files) > 1:
+        files_needing_parse = [
+            f for f in source_files
+            if not (self.use_cache and f["file_hash"] and
+                    self.repo.get_parse_cache(f["id"], f["file_hash"]) is not None)
+        ]
+        if len(files_needing_parse) > 1:
             from concurrent.futures import ThreadPoolExecutor
-            with ThreadPoolExecutor(max_workers=min(8, len(source_files))) as ex:
-                list(ex.map(lambda f: ts_parser.parse_file(f["path"]), source_files))
+            with ThreadPoolExecutor(max_workers=min(8, len(files_needing_parse))) as ex:
+                list(ex.map(lambda f: ts_parser.parse_file(f["path"]), files_needing_parse))
 
         for f in source_files:
             rp = f["relative_path"]
             path = f["path"]
-            root = ts_parser.parse_file(path)
-            if root is None:
-                continue
+            file_id = f["id"]
+            file_hash = f["file_hash"]
 
-            assignments = ts_parser.extract_all_assignments(root)
-            calls = ts_parser.extract_call_arguments(root)
-            params = ts_parser.extract_function_params(root)
-            returns = ts_parser.extract_function_returns(root)
-            enums = ts_parser.extract_enum_definitions(root)
-            ranges = ts_parser.extract_range_constraints(root)
-            union_types = ts_parser.extract_union_types(root)
-            union_instances = ts_parser.extract_union_instances(root, union_types) if union_types else []
+            entities = None
+            if self.use_cache and file_hash:
+                entities = self.repo.get_parse_cache(file_id, file_hash)
 
-            # auto-register user-defined macros whose body contains a
-            # sink-like assignment (e.g. (r)->regs[idx] = (v)). Each such
-            # macro's name is appended to _compiled_sinks so macro calls
-            # matching the registered sink patterns become synthetic sinks.
-            for m in ts_parser.extract_macros_with_assignments(root):
+            if entities is None:
+                root = ts_parser.parse_file(path)
+                if root is None:
+                    continue
+                union_types = ts_parser.extract_union_types(root)
+                entities = {
+                    "assignments": ts_parser.extract_all_assignments(root),
+                    "calls": ts_parser.extract_call_arguments(root),
+                    "params": ts_parser.extract_function_params(root),
+                    "returns": ts_parser.extract_function_returns(root),
+                    "enums": ts_parser.extract_enum_definitions(root),
+                    "ranges": ts_parser.extract_range_constraints(root),
+                    "union_instances": (
+                        ts_parser.extract_union_instances(root, union_types)
+                        if union_types else []
+                    ),
+                    "macros": ts_parser.extract_macros_with_assignments(root),
+                    "fnptr_table_entries": ts_parser.extract_fnptr_table_entries(root),
+                }
+                self._cache_misses += 1
+                if self.use_cache and file_hash:
+                    try:
+                        self.repo.upsert_parse_cache(file_id, file_hash, entities)
+                    except Exception:
+                        pass
+            else:
+                self._cache_hits += 1
+
+            assignments = entities["assignments"]
+            calls = entities["calls"]
+            params = entities["params"]
+            returns = entities["returns"]
+            enums = entities["enums"]
+            ranges = entities["ranges"]
+            union_instances = entities["union_instances"]
+
+            for m in entities["macros"]:
                 macro_name = m["macro_name"]
                 macro_pat = re.compile(r"\b" + re.escape(macro_name) + r"\s*\(")
                 if not any(p.pattern == macro_pat.pattern for p in self._compiled_sinks):
                     self._compiled_sinks.append(macro_pat)
 
-            # F3: static fnptr table with designated-init entries.
-            for entry in ts_parser.extract_fnptr_table_entries(root):
+            for entry in entities["fnptr_table_entries"]:
                 self._fnptr_table_entries_pending = getattr(
                     self, "_fnptr_table_entries_pending", []
                 )

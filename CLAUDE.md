@@ -96,6 +96,7 @@ CLI (click) + MCP Server (FastMCP) 이중 인터페이스.
 | 2026-04-06 | 초기 구성 | 개발 하네스 전체 | 하네스 신규 구축 |
 | 2026-04-11 | evolution 하네스 추가 | benchmarker, reasoner, cpp-analyzer-{bench,reason,evolution} | 벤치마크 기반 자가 개선 파이프라인 구축 (기존 개발 하네스와 분리) |
 | 2026-04-13 | curator 하네스 추가 | miner, triager, fixture-writer, cpp-analyzer-{mine,triage,fixture,curator} | 외부 OSS에서 idiom 채굴 → fixture 편입으로 측정 범위 확장 (evolution과 직교, `_workspace_curator/` 격리) |
+| 2026-04-14 | parse_cache + config_scan_state 도입 | schema.py(v7), repository.py, taint_tracker.py, config_tracker.py, CLI `--no-cache`, MCP `use_cache` | 대규모 repo 반복 분석 시 `_load_all_files`/`scan_all` 재실행 비용 제거. 파일 hash 기반 캐시 (FK cascade로 invalidation 자동). 작은 fixture 9.2× 빨라짐, 대형 타겟은 trace() 후반부가 병목이라 1.0× (후속 최적화 타깃). 회귀 0 (90/90 PASS, 신규 test_parse_cache 6건 포함) |
 
 ## 하네스: cpp-analyzer fixture 채굴 (curator)
 

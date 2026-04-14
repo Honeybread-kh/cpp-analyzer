@@ -2,7 +2,7 @@
 Database schema: all CREATE TABLE / CREATE INDEX statements.
 """
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 DDL = """
 PRAGMA journal_mode = WAL;
@@ -170,4 +170,20 @@ CREATE TABLE IF NOT EXISTS dataflow_paths (
 );
 CREATE INDEX IF NOT EXISTS idx_dfpaths_project ON dataflow_paths(project_id);
 CREATE INDEX IF NOT EXISTS idx_dfpaths_source  ON dataflow_paths(source_var);
+
+-- ── parse entity cache (hash-keyed by files.file_hash) ──────────────────────
+CREATE TABLE IF NOT EXISTS parse_cache (
+    file_id    INTEGER PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
+    file_hash  TEXT    NOT NULL,
+    payload    TEXT    NOT NULL,     -- JSON of extracted entities
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_parse_cache_hash ON parse_cache(file_hash);
+
+-- ── config scan state (hash-gate for ConfigTracker.scan_all) ─────────────────
+CREATE TABLE IF NOT EXISTS config_scan_state (
+    file_id    INTEGER PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
+    scan_hash  TEXT    NOT NULL,
+    scanned_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
 """
