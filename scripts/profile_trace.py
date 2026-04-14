@@ -38,6 +38,9 @@ def main():
 
     # warm parse_cache first so profile focuses on trace() body
     TaintTracker(repo, pid, use_cache=True).trace(max_depth=5, max_paths=200)
+    # drop trace_result_cache so measured run exercises the full trace path
+    # (parse_cache stays warm; that's realistic for repeated query workloads)
+    repo.clear_trace_cache(pid)
 
     tracker = TaintTracker(repo, pid, use_cache=True)
     prof = cProfile.Profile()

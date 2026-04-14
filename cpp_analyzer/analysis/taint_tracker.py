@@ -214,50 +214,47 @@ class TaintTracker:
             for rhs_var in rhs_vars:
                 trace_starts.append((rhs_var, func_name, file_path, [], sink_node))
                 if self._is_param(rhs_var, func_name, file_path):
-                    for caller_file, calls in self._file_calls.items():
-                        for call in calls:
-                            if not self._resolve_call_to(func_name, caller_file, call):
-                                continue
-                            param_index = None
-                            base = rhs_var.split("->")[0].split(".")[0]
-                            for fp in self._file_params.get(file_path, []):
-                                if fp["function_name"] == func_name:
-                                    for p in fp["params"]:
-                                        if p["name"] == base:
-                                            param_index = p["index"]
-                                    break
-                            if param_index is None:
-                                continue
-                            arg_expr = None
-                            for arg in call["args"]:
-                                if arg["index"] == param_index:
-                                    arg_expr = arg["expression"]
-                                    if "->" in rhs_var:
-                                        suffix = rhs_var.split("->", 1)[1]
-                                        if "->" not in arg_expr and "." not in arg_expr:
-                                            arg_expr = f"{arg_expr}->{suffix}"
-                                    break
-                            if arg_expr is None:
-                                continue
-                            preamble = [TaintNode(
-                                variable=f"{func_name}({rhs_var})",
-                                node_type="INTERMEDIATE",
-                                transform="param",
-                                file=file_path,
-                                function=func_name,
-                            )]
-                            substituted = self._substitute_sink_params(
-                                sink_info["lhs"], func_name, file_path, call,
-                            )
-                            per_caller_sink = sink_node if substituted == sink_info["lhs"] else TaintNode(
-                                variable=substituted,
-                                node_type="SINK",
-                                transform="",
-                                file=file_path,
-                                line=sink_info["line"],
-                                function=func_name,
-                            )
-                            trace_starts.append((arg_expr, call["function"], caller_file, preamble, per_caller_sink))
+                    for caller_file, call in self._caller_index.get(func_name, ()):
+                        param_index = None
+                        base = rhs_var.split("->")[0].split(".")[0]
+                        for fp in self._file_params.get(file_path, []):
+                            if fp["function_name"] == func_name:
+                                for p in fp["params"]:
+                                    if p["name"] == base:
+                                        param_index = p["index"]
+                                break
+                        if param_index is None:
+                            continue
+                        arg_expr = None
+                        for arg in call["args"]:
+                            if arg["index"] == param_index:
+                                arg_expr = arg["expression"]
+                                if "->" in rhs_var:
+                                    suffix = rhs_var.split("->", 1)[1]
+                                    if "->" not in arg_expr and "." not in arg_expr:
+                                        arg_expr = f"{arg_expr}->{suffix}"
+                                break
+                        if arg_expr is None:
+                            continue
+                        preamble = [TaintNode(
+                            variable=f"{func_name}({rhs_var})",
+                            node_type="INTERMEDIATE",
+                            transform="param",
+                            file=file_path,
+                            function=func_name,
+                        )]
+                        substituted = self._substitute_sink_params(
+                            sink_info["lhs"], func_name, file_path, call,
+                        )
+                        per_caller_sink = sink_node if substituted == sink_info["lhs"] else TaintNode(
+                            variable=substituted,
+                            node_type="SINK",
+                            transform="",
+                            file=file_path,
+                            line=sink_info["line"],
+                            function=func_name,
+                        )
+                        trace_starts.append((arg_expr, call["function"], caller_file, preamble, per_caller_sink))
 
             seen_sources: set[tuple[str, str]] = set()
             for start_var, start_func, start_file, preamble, effective_sink in trace_starts:
@@ -495,6 +492,25 @@ class TaintTracker:
                     )
 
         self._build_caller_index()
+        self._build_writer_index()
+
+    def _build_writer_index(self) -> None:
+        """Pre-compute LHS → [(writer_func, writer_file, assignment)] and
+        field-suffix → [(writer_func, writer_file, assignment)] so cross-func
+        writer lookups are O(1) dict hits instead of O(total_assignments)
+        linear scans."""
+        self._writers_by_lhs: dict[str, list[tuple[str, str, dict]]] = {}
+        self._writers_by_field_suffix: dict[str, list[tuple[str, str, dict]]] = {}
+        for file_path, assignments in self._file_assignments.items():
+            for a in assignments:
+                lhs = a["lhs"]
+                entry = (a["function"], file_path, a)
+                self._writers_by_lhs.setdefault(lhs, []).append(entry)
+                for sep in ("->", "."):
+                    if sep in lhs:
+                        suffix = sep + lhs.split(sep, 1)[1]
+                        self._writers_by_field_suffix.setdefault(suffix, []).append(entry)
+                        break
 
     def _build_caller_index(self) -> None:
         """Pre-compute target_func → [(caller_file, call)] mapping so
@@ -1064,14 +1080,11 @@ class TaintTracker:
         else:
             return []
 
-        results = []
-        for file_path, assignments in self._file_assignments.items():
-            for a in assignments:
-                if a["function"] == current_func and file_path == current_file:
-                    continue
-                if a["lhs"].endswith(field_suffix):
-                    results.append((a["function"], file_path, a))
-        return results
+        return [
+            (fn, fp, a)
+            for fn, fp, a in self._writers_by_field_suffix.get(field_suffix, ())
+            if not (fn == current_func and fp == current_file)
+        ]
 
     def _find_cross_func_var_writers(
         self, var: str, current_func: str, current_file: str,
@@ -1084,14 +1097,11 @@ class TaintTracker:
 
         Returns list of (writer_func, writer_file, assignment_dict).
         """
-        results = []
-        for file_path, assignments in self._file_assignments.items():
-            for a in assignments:
-                if a["function"] == current_func and file_path == current_file:
-                    continue
-                if a["lhs"] == var:
-                    results.append((a["function"], file_path, a))
-        return results
+        return [
+            (fn, fp, a)
+            for fn, fp, a in self._writers_by_lhs.get(var, ())
+            if not (fn == current_func and fp == current_file)
+        ]
 
     def generate_config_specs(self, paths: list[DataFlowPath] | None = None) -> list[ConfigFieldSpec]:
         """Generate config field specifications with enum/range metadata and descriptions.
