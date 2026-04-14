@@ -679,6 +679,53 @@ def trace_dataflow(
 
 
 @mcp.tool()
+def query_dataflow_paths(
+    source_var: str | None = None,
+    sink_var: str | None = None,
+    limit: int = 50,
+    db_path: str | None = None,
+    project_id: int | None = None,
+) -> str:
+    """
+    Query previously saved dataflow paths from the DB.
+
+    Reads from the dataflow_paths table. Assumes `trace_dataflow(save=True)`
+    was run earlier. Does NOT rerun taint analysis.
+
+    Args:
+        source_var: Substring filter on source variable (SQL LIKE %x%).
+        sink_var:   Substring filter on sink variable.
+        limit:      Maximum number of paths to return.
+    """
+    import json as _json
+
+    db   = _default_db(db_path)
+    repo = _repo(db)
+    pid  = _resolve_project_id(repo, project_id)
+    if pid is None:
+        repo.close()
+        return "No project found."
+
+    rows = repo.get_dataflow_paths(pid, source_var=source_var, sink_var=sink_var)
+    rows = rows[:limit]
+    repo.close()
+
+    if not rows:
+        return "No saved dataflow paths. Run trace_dataflow with save=True first."
+
+    out = [
+        {
+            "source_var": r["source_var"],
+            "sink_var":   r["sink_var"],
+            "depth":      r["depth"],
+            "path":       _json.loads(r["path_json"]),
+        }
+        for r in rows
+    ]
+    return _json.dumps(out, indent=2)
+
+
+@mcp.tool()
 def reverse_trace_dataflow(
     sink_pattern: str,
     source_pattern: str | None = None,

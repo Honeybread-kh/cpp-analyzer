@@ -439,6 +439,66 @@ def trace_dataflow(db, project_id, patterns, source, sink, depth, max_paths, sav
     repo.close()
 
 
+@trace.command("query")
+@click.option("--db",         default=DEFAULT_DB, show_default=True)
+@click.option("--project-id", default=None, type=int)
+@click.option("--source",     default=None, help="Filter: source_var LIKE %<pattern>%")
+@click.option("--sink",       default=None, help="Filter: sink_var LIKE %<pattern>%")
+@click.option("--limit",      default=50, show_default=True, help="Max rows")
+@click.option("--format",     "fmt", default="tree", type=click.Choice(["tree", "json"]),
+              show_default=True, help="Output format")
+def trace_query(db, project_id, source, sink, limit, fmt):
+    """Query previously saved dataflow paths from the DB.
+
+    Reads from the dataflow_paths table (populated via `trace dataflow --save`).
+    Does NOT rerun taint analysis.
+    """
+    import json as _json
+
+    repo = _get_repo(db)
+    pid = _resolve_project(repo, project_id)
+    rows = repo.get_dataflow_paths(pid, source_var=source, sink_var=sink)
+    rows = rows[:limit]
+
+    if not rows:
+        console.print("[yellow]No saved paths. Run `trace dataflow --save` first.[/yellow]")
+        repo.close()
+        return
+
+    if fmt == "json":
+        out = [
+            {
+                "source_var": r["source_var"],
+                "sink_var": r["sink_var"],
+                "depth": r["depth"],
+                "path": _json.loads(r["path_json"]),
+            }
+            for r in rows
+        ]
+        console.print(_json.dumps(out, indent=2))
+    else:
+        console.print(f"\n[bold]{len(rows)} saved path(s)[/bold]\n")
+        for i, r in enumerate(rows, 1):
+            tree = Tree(
+                f"[bold yellow]{i}[/bold yellow]: "
+                f"[green]{r['source_var']}[/green] → [red]{r['sink_var']}[/red]  "
+                f"[dim](depth {r['depth']})[/dim]"
+            )
+            for node in _json.loads(r["path_json"]):
+                style = {"SOURCE": "bold green", "SINK": "bold red"}.get(node.get("node_type", ""), "cyan")
+                label = f"[{style}]{node.get('variable', '')}[/{style}]"
+                if node.get("transform"):
+                    label += f"  [dim]({node['transform']})[/dim]"
+                if node.get("file"):
+                    label += f"  [blue]{node['file']}:{node.get('line', 0)}[/blue]"
+                if node.get("function"):
+                    label += f"  [dim]{node['function']}()[/dim]"
+                tree.add(label)
+            console.print(tree)
+
+    repo.close()
+
+
 @cli.command("config-spec")
 @click.option("--db",         default=DEFAULT_DB, show_default=True)
 @click.option("--project-id", default=None, type=int)
