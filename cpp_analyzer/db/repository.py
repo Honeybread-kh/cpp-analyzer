@@ -637,6 +637,60 @@ class Repository:
         )
         self._conn.commit()
 
+    # ── trace result cache ────────────────────────────────────────────────────
+
+    def compute_project_fingerprint(self, project_id: int) -> str:
+        """Aggregate hash of all (file_id, file_hash) for the project.
+        Any file change flips this value, invalidating dependent caches."""
+        import hashlib
+        rows = self._conn.execute(
+            "SELECT id, file_hash FROM files WHERE project_id=? ORDER BY id",
+            (project_id,),
+        ).fetchall()
+        h = hashlib.sha256()
+        for r in rows:
+            h.update(f"{r['id']}:{r['file_hash'] or ''}\n".encode())
+        return h.hexdigest()
+
+    def get_trace_result(
+        self, project_id: int, key_hash: str, fingerprint: str
+    ) -> list[dict] | None:
+        row = self._conn.execute(
+            """SELECT paths_json, fingerprint FROM trace_result_cache
+               WHERE project_id=? AND key_hash=?""",
+            (project_id, key_hash),
+        ).fetchone()
+        if row is None or row["fingerprint"] != fingerprint:
+            return None
+        try:
+            return json.loads(row["paths_json"])
+        except (ValueError, TypeError):
+            return None
+
+    def upsert_trace_result(
+        self,
+        project_id: int,
+        key_hash: str,
+        fingerprint: str,
+        paths: list[dict],
+    ) -> None:
+        self._conn.execute(
+            """INSERT INTO trace_result_cache(project_id, key_hash, fingerprint, paths_json)
+                   VALUES(?,?,?,?)
+               ON CONFLICT(project_id, key_hash) DO UPDATE SET
+                   fingerprint=excluded.fingerprint,
+                   paths_json=excluded.paths_json,
+                   created_at=CURRENT_TIMESTAMP""",
+            (project_id, key_hash, fingerprint, json.dumps(paths)),
+        )
+        self._conn.commit()
+
+    def clear_trace_cache(self, project_id: int) -> None:
+        self._conn.execute(
+            "DELETE FROM trace_result_cache WHERE project_id=?", (project_id,)
+        )
+        self._conn.commit()
+
     # ── config patterns ───────────────────────────────────────────────────────
 
     def sync_config_patterns(self, patterns: list[dict]) -> None:

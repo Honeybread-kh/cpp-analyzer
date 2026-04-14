@@ -2,7 +2,7 @@
 Database schema: all CREATE TABLE / CREATE INDEX statements.
 """
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 DDL = """
 PRAGMA journal_mode = WAL;
@@ -186,4 +186,18 @@ CREATE TABLE IF NOT EXISTS config_scan_state (
     scan_hash  TEXT    NOT NULL,
     scanned_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
+
+-- ── trace result cache (query-level memoization) ────────────────────────────
+-- Key derives from (project, source/sink regexes, depth, project_fingerprint).
+-- fingerprint = sha256 of sorted (file_id,file_hash) pairs; any file change
+-- invalidates all entries for the project on next lookup.
+CREATE TABLE IF NOT EXISTS trace_result_cache (
+    project_id  INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    key_hash    TEXT    NOT NULL,
+    fingerprint TEXT    NOT NULL,
+    paths_json  TEXT    NOT NULL,
+    created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (project_id, key_hash)
+);
+CREATE INDEX IF NOT EXISTS idx_trc_project ON trace_result_cache(project_id);
 """

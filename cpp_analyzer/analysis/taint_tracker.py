@@ -145,6 +145,17 @@ class TaintTracker:
         self._file_unions: dict[str, list[dict]] = {}       # path -> union instances
         self._func_to_file: dict[str, str] = {}             # func_name -> file path
 
+    def _trace_cache_key(self, max_depth: int, max_paths: int) -> str:
+        """Stable hash of the query + pattern set used for result caching."""
+        import hashlib
+        parts = [
+            "depth", str(max_depth),
+            "paths", str(max_paths),
+            "src", *sorted(p["regex"] for p in self.source_patterns),
+            "snk", *sorted(p["regex"] for p in self.sink_patterns),
+        ]
+        return hashlib.sha256("\x1f".join(parts).encode()).hexdigest()
+
     def trace(self, max_depth: int = 5, max_paths: int = 100) -> list[DataFlowPath]:
         """Run full taint analysis across the project.
 
@@ -153,6 +164,24 @@ class TaintTracker:
         3. Cross function boundaries via call graph
         4. Stop when a source pattern is matched or depth limit reached
         """
+        # Query-level result cache. Key binds patterns+depth+max_paths to the
+        # project fingerprint (aggregate of per-file hashes). Any file change
+        # flips the fingerprint → cache miss → full re-compute.
+        cache_key = None
+        fingerprint = None
+        if self.use_cache:
+            try:
+                cache_key = self._trace_cache_key(max_depth, max_paths)
+                fingerprint = self.repo.compute_project_fingerprint(self.project_id)
+                cached = self.repo.get_trace_result(
+                    self.project_id, cache_key, fingerprint
+                )
+                if cached is not None:
+                    self._cache_hits += len(cached)
+                    return [DataFlowPath.from_dict(p) for p in cached]
+            except Exception:
+                cache_key = None
+
         self._load_all_files()
         sinks = self._scan_sinks()
         paths: list[DataFlowPath] = []
@@ -261,6 +290,14 @@ class TaintTracker:
                 if len(paths) >= max_paths:
                     break
 
+        if self.use_cache and cache_key is not None and fingerprint is not None:
+            try:
+                self.repo.upsert_trace_result(
+                    self.project_id, cache_key, fingerprint,
+                    [p.to_dict() for p in paths],
+                )
+            except Exception:
+                pass
         return paths
 
     def _load_all_files(self) -> None:

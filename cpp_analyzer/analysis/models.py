@@ -95,6 +95,17 @@ class TaintNode:
     def to_dict(self) -> dict:
         return asdict(self)
 
+    @classmethod
+    def from_dict(cls, d: dict) -> "TaintNode":
+        return cls(
+            variable=d.get("variable", ""),
+            node_type=d.get("node_type", ""),
+            transform=d.get("transform", ""),
+            file=d.get("file", ""),
+            line=d.get("line", 0),
+            function=d.get("function", ""),
+        )
+
 
 @dataclass
 class DataFlowPath:
@@ -108,6 +119,14 @@ class DataFlowPath:
             "sink": self.sink.to_dict(),
             "steps": [s.to_dict() for s in self.steps],
         }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "DataFlowPath":
+        return cls(
+            source=TaintNode.from_dict(d["source"]),
+            sink=TaintNode.from_dict(d["sink"]),
+            steps=[TaintNode.from_dict(s) for s in d.get("steps", [])],
+        )
 
     @property
     def depth(self) -> int:

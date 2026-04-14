@@ -78,6 +78,29 @@ def test_config_scan_state_roundtrip():
     assert repo.get_config_scan_state(pid) == {fid: "h2"}
 
 
+def test_trace_result_cache_roundtrip():
+    repo, _ = _new_repo()
+    pid = repo.upsert_project("p", ["/fake"])
+    fid = _make_file(repo, pid, "a.c", "h1")
+    fp = repo.compute_project_fingerprint(pid)
+    paths = [{"source": {"variable": "x"}, "sink": {"variable": "y"}, "steps": []}]
+    repo.upsert_trace_result(pid, "k1", fp, paths)
+    assert repo.get_trace_result(pid, "k1", fp) == paths
+
+
+def test_trace_result_cache_invalidated_on_file_change():
+    repo, _ = _new_repo()
+    pid = repo.upsert_project("p", ["/fake"])
+    fid = _make_file(repo, pid, "a.c", "h1")
+    fp_before = repo.compute_project_fingerprint(pid)
+    repo.upsert_trace_result(pid, "k1", fp_before, [{"v": 1}])
+    # Simulate file-hash change.
+    _make_file(repo, pid, "a.c", "h2")
+    fp_after = repo.compute_project_fingerprint(pid)
+    assert fp_before != fp_after
+    assert repo.get_trace_result(pid, "k1", fp_after) is None
+
+
 def test_invalidate_parse_cache():
     repo, _ = _new_repo()
     pid = repo.upsert_project("p", ["/fake"])
