@@ -10,6 +10,11 @@ from __future__ import annotations
 
 import json
 import re
+
+# hot-path regexes pre-compiled once (called 100M+ times across trace())
+_RE_ARR_INDEX = re.compile(r'^(\w+)\s*\[')
+_RE_PLAIN_IDENT = re.compile(r'[A-Za-z_]\w*')
+_RE_MEMBER_CALL = re.compile(r'(?:->|\.|::)(\w+)$')
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -452,6 +457,63 @@ class TaintTracker:
                         entry["callee"]
                     )
 
+        self._build_caller_index()
+
+    def _build_caller_index(self) -> None:
+        """Pre-compute target_func → [(caller_file, call)] mapping so
+        `_find_callers_with_args` is O(1) dict lookup per target instead of
+        O(total_calls) linear scan. Must run after all fnptr alias maps are
+        populated (end of _load_all_files)."""
+        self._caller_index: dict[str, list[tuple[str, dict]]] = {}
+
+        def _add(target: str, file_path: str, call: dict, seen: set) -> None:
+            if target in seen:
+                return
+            seen.add(target)
+            self._caller_index.setdefault(target, []).append((file_path, call))
+
+        for file_path, calls in self._file_calls.items():
+            for call in calls:
+                seen: set[str] = set()
+                callee = call["callee_name"]
+                caller = call["function"]
+
+                # direct
+                _add(callee, file_path, call, seen)
+
+                # fnptr_aliases (file+caller scope)
+                tgt = self._fnptr_aliases.get((file_path, caller, callee))
+                if tgt:
+                    _add(tgt, file_path, call, seen)
+
+                # fnptr_globals
+                tgt = self._fnptr_globals.get(callee)
+                if tgt:
+                    _add(tgt, file_path, call, seen)
+
+                # array dispatch `g_cbs[i](...)`
+                m = _RE_ARR_INDEX.match(callee)
+                if m:
+                    for t in self._fnptr_array_elements.get(m.group(1), ()):
+                        _add(t, file_path, call, seen)
+
+                # G1: plain-ident callee bound from arr[IDX] earlier in fn
+                if _RE_PLAIN_IDENT.fullmatch(callee):
+                    arr_base = self._fnptr_local_to_array.get(
+                        (file_path, caller, callee)
+                    )
+                    if arr_base:
+                        for t in self._fnptr_array_elements.get(arr_base, ()):
+                            _add(t, file_path, call, seen)
+
+                # P3/F2-struct: member-style dispatch
+                mm = _RE_MEMBER_CALL.search(callee)
+                if mm:
+                    member = mm.group(1)
+                    _add(member, file_path, call, seen)
+                    for t in self._fnptr_struct_members.get(member, ()):
+                        _add(t, file_path, call, seen)
+
     def _scan_sinks(self) -> list[dict]:
         """Find all assignments whose LHS matches a sink pattern."""
         sinks = []
@@ -874,63 +936,19 @@ class TaintTracker:
             return []
 
         results = []
-        for file_path, calls in self._file_calls.items():
-            for call in calls:
-                direct = call["callee_name"] == func_name
-                indirect = False
-                if not direct:
-                    # resolve function-pointer indirect call:
-                    # lookup (file, caller_func, callee_var) → target_func
-                    key = (file_path, call["function"], call["callee_name"])
-                    if self._fnptr_aliases.get(key) == func_name:
-                        indirect = True
-                    # fallback: file-scope / global fnptr assigned elsewhere
-                    elif self._fnptr_globals.get(call["callee_name"]) == func_name:
-                        indirect = True
-                    else:
-                        # P5: array-of-fnptr dispatch. `g_cbs[i](...)`
-                        # matches any function registered into `g_cbs[*]`.
-                        m = re.match(r'^(\w+)\s*\[', call["callee_name"])
-                        if m and func_name in self._fnptr_array_elements.get(m.group(1), set()):
-                            indirect = True
-                        # G1: plain-identifier callee `fp(...)` where fp was
-                        # assigned from arr[IDX] earlier in the function.
-                        if not indirect and re.fullmatch(r'[A-Za-z_]\w*', call["callee_name"]):
-                            arr_base = self._fnptr_local_to_array.get(
-                                (file_path, call["function"], call["callee_name"])
-                            )
-                            if arr_base and func_name in self._fnptr_array_elements.get(arr_base, set()):
-                                indirect = True
-                        # P3: C++ member-style calls. `w->method(...)` and
-                        # `obj.method(...)` match overrides by bare method
-                        # name. Pointer-to-member `(w->*fn)(...)` is NOT
-                        # matched — fn is runtime-valued.
-                        if not indirect:
-                            mm = re.search(r'(?:->|\.|::)(\w+)$', call["callee_name"])
-                            if mm:
-                                member = mm.group(1)
-                                # P3 exact match
-                                if member == func_name:
-                                    indirect = True
-                                # F2-struct: struct-ops designated init
-                                # `static T ops = { .member = callee }`
-                                # resolves `x->ops->member(...)` to callee.
-                                elif func_name in self._fnptr_struct_members.get(member, set()):
-                                    indirect = True
-                if not (direct or indirect):
-                    continue
-                for arg in call["args"]:
-                    if arg["index"] == param_index:
-                        arg_expr = arg["expression"]
-                        if "->" in param_var:
-                            suffix = param_var.split("->", 1)[1]
-                            if "->" not in arg_expr and "." not in arg_expr:
-                                arg_expr = f"{arg_expr}->{suffix}"
-                        results.append((
-                            call["function"],
-                            file_path,
-                            arg_expr,
-                        ))
+        for file_path, call in self._caller_index.get(func_name, ()):
+            for arg in call["args"]:
+                if arg["index"] == param_index:
+                    arg_expr = arg["expression"]
+                    if "->" in param_var:
+                        suffix = param_var.split("->", 1)[1]
+                        if "->" not in arg_expr and "." not in arg_expr:
+                            arg_expr = f"{arg_expr}->{suffix}"
+                    results.append((
+                        call["function"],
+                        file_path,
+                        arg_expr,
+                    ))
         return results
 
     def _resolve_call_to(self, func_name: str, file_path: str, call: dict) -> bool:
@@ -946,16 +964,16 @@ class TaintTracker:
             return True
         if self._fnptr_globals.get(call["callee_name"]) == func_name:
             return True
-        m = re.match(r'^(\w+)\s*\[', call["callee_name"])
+        m = _RE_ARR_INDEX.match(call["callee_name"])
         if m and func_name in self._fnptr_array_elements.get(m.group(1), set()):
             return True
-        if re.fullmatch(r'[A-Za-z_]\w*', call["callee_name"]):
+        if _RE_PLAIN_IDENT.fullmatch(call["callee_name"]):
             arr_base = self._fnptr_local_to_array.get(
                 (file_path, call["function"], call["callee_name"])
             )
             if arr_base and func_name in self._fnptr_array_elements.get(arr_base, set()):
                 return True
-        mm = re.search(r'(?:->|\.|::)(\w+)$', call["callee_name"])
+        mm = _RE_MEMBER_CALL.search(call["callee_name"])
         if mm:
             member = mm.group(1)
             if member == func_name:
