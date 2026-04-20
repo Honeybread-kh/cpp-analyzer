@@ -121,7 +121,7 @@ CREATE INDEX IF NOT EXISTS idx_csrc_symbol  ON config_sources(symbol_id);
 -- ── config usages: every place a config key influences logic ──────────────────
 CREATE TABLE IF NOT EXISTS config_usages (
     id                   INTEGER PRIMARY KEY,
-    source_id            INTEGER REFERENCES config_sources(id),
+    source_id            INTEGER REFERENCES config_sources(id) ON DELETE SET NULL,
     file_id              INTEGER NOT NULL REFERENCES files(id),
     symbol_id            INTEGER REFERENCES symbols(id),
     config_key           TEXT    NOT NULL,
