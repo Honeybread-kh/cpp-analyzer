@@ -355,11 +355,9 @@ def trace_dataflow(db, project_id, patterns, source, sink, depth, max_paths, sav
 
     if patterns:
         yaml_sources, yaml_sinks = load_patterns_yaml(patterns)
-        if yaml_sources:
-            source_patterns = yaml_sources
-        if yaml_sinks:
-            sink_patterns = yaml_sinks
-        console.print(f"[cyan]Loaded patterns: {len(yaml_sources)} sources, {len(yaml_sinks)} sinks[/cyan]")
+        source_patterns = yaml_sources
+        sink_patterns = yaml_sinks
+        console.print(f"[cyan]Loaded patterns: {len(yaml_sources)} sources, {len(yaml_sinks)} sinks (defaults replaced)[/cyan]")
 
     if source:
         source_patterns = [{"name": f"custom_{i}", "regex": s} for i, s in enumerate(source)]

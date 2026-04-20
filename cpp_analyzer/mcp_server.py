@@ -645,10 +645,8 @@ def trace_dataflow(
     if patterns_file:
         try:
             yaml_sources, yaml_sinks = load_patterns_yaml(patterns_file)
-            if yaml_sources:
-                source_patterns = yaml_sources
-            if yaml_sinks:
-                sink_patterns = yaml_sinks
+            source_patterns = yaml_sources
+            sink_patterns = yaml_sinks
         except Exception as e:
             repo.close()
             return f"Error loading patterns file: {e}"
@@ -764,10 +762,8 @@ def reverse_trace_dataflow(
     if patterns_file:
         try:
             yaml_sources, yaml_sinks = load_patterns_yaml(patterns_file)
-            if yaml_sources:
-                source_patterns = yaml_sources
-            if yaml_sinks:
-                sink_patterns = yaml_sinks
+            source_patterns = yaml_sources
+            sink_patterns = yaml_sinks
         except Exception as e:
             repo.close()
             return f"Error loading patterns file: {e}"
@@ -842,10 +838,8 @@ def export_config_spec(
     if patterns_file:
         try:
             yaml_sources, yaml_sinks = load_patterns_yaml(patterns_file)
-            if yaml_sources:
-                source_patterns = yaml_sources
-            if yaml_sinks:
-                sink_patterns_list = yaml_sinks
+            source_patterns = yaml_sources
+            sink_patterns_list = yaml_sinks
         except Exception as e:
             repo.close()
             return f"Error loading patterns file: {e}"
