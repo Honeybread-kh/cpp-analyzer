@@ -334,7 +334,8 @@ def trace_config(key, db, project_id, depth, chains):
               show_default=True, help="Output format")
 @click.option("--reverse",    default=None, help="Reverse trace: sink pattern regex to trace backward from")
 @click.option("--no-cache",   is_flag=True, help="Bypass parse_cache (re-parse all files)")
-def trace_dataflow(db, project_id, patterns, source, sink, depth, max_paths, save, fmt, reverse, no_cache):
+@click.option("--verbose", "-v", is_flag=True, help="Show detailed trace progress")
+def trace_dataflow(db, project_id, patterns, source, sink, depth, max_paths, save, fmt, reverse, no_cache, verbose):
     """Trace dataflow from config fields to register writes (taint analysis).
 
     Use --patterns to load source/sink patterns from a YAML file.
@@ -365,7 +366,8 @@ def trace_dataflow(db, project_id, patterns, source, sink, depth, max_paths, sav
     if sink:
         sink_patterns = [{"name": f"custom_{i}", "regex": s} for i, s in enumerate(sink)]
 
-    tracker = TaintTracker(repo, pid, source_patterns, sink_patterns, use_cache=not no_cache)
+    tracker = TaintTracker(repo, pid, source_patterns, sink_patterns, use_cache=not no_cache,
+                           verbose_cb=console.print if verbose else None)
 
     if reverse:
         with console.status("[bold green]Running reverse taint analysis..."):

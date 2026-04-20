@@ -119,12 +119,14 @@ class TaintTracker:
         source_patterns: list[dict] | None = None,
         sink_patterns: list[dict] | None = None,
         use_cache: bool = True,
+        verbose_cb=None,
     ):
         self.repo = repo
         self.project_id = project_id
         self.source_patterns = source_patterns or DEFAULT_SOURCE_PATTERNS
         self.sink_patterns = sink_patterns or DEFAULT_SINK_PATTERNS
         self.use_cache = use_cache
+        self._verbose_cb = verbose_cb or (lambda msg: None)
         self._cache_hits = 0
         self._cache_misses = 0
 
@@ -184,6 +186,7 @@ class TaintTracker:
 
         self._load_all_files()
         sinks = self._scan_sinks()
+        self._verbose_cb(f"[trace] {len(sinks)} sink(s) found, tracing backward (depth={max_depth}, max_paths={max_paths})...")
         paths: list[DataFlowPath] = []
 
         for sink_info in sinks:
@@ -284,6 +287,10 @@ class TaintTracker:
                     steps=full_chain[1:] if len(full_chain) > 1 else [],
                 )
                 paths.append(path)
+                self._verbose_cb(
+                    f"[path {len(paths)}] {source_node.variable} ({source_node.file}:{source_node.line})"
+                    f" → {effective_sink.variable} ({effective_sink.file}:{effective_sink.line})"
+                )
                 if len(paths) >= max_paths:
                     break
 
@@ -302,6 +309,7 @@ class TaintTracker:
         files = self.repo.list_files(self.project_id)
         exts = (".c", ".cpp", ".cc", ".cxx", ".h", ".hpp", ".hxx")
         source_files = [f for f in files if f["relative_path"].endswith(exts)]
+        self._verbose_cb(f"[load] {len(source_files)} source files to process")
 
         # B2: parallel parse pre-warm. tree-sitter's C parser releases the GIL,
         # so parallel parse_file calls populate the module-level cache faster
@@ -316,11 +324,14 @@ class TaintTracker:
             with ThreadPoolExecutor(max_workers=min(8, len(files_needing_parse))) as ex:
                 list(ex.map(lambda f: ts_parser.parse_file(f["path"]), files_needing_parse))
 
-        for f in source_files:
+        for fi, f in enumerate(source_files):
             rp = f["relative_path"]
             path = f["path"]
             file_id = f["id"]
             file_hash = f["file_hash"]
+
+            if (fi + 1) % 200 == 0 or fi + 1 == len(source_files):
+                self._verbose_cb(f"[load] {fi + 1}/{len(source_files)}: {rp}")
 
             entities = None
             if self.use_cache and file_hash:
@@ -569,6 +580,7 @@ class TaintTracker:
 
     def _scan_sinks(self) -> list[dict]:
         """Find all assignments whose LHS matches a sink pattern."""
+        self._verbose_cb(f"[scan] scanning {len(self._file_assignments)} files for sink patterns...")
         sinks = []
         for file_path, assignments in self._file_assignments.items():
             for a in assignments:
