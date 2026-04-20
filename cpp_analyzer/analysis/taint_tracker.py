@@ -120,11 +120,13 @@ class TaintTracker:
         sink_patterns: list[dict] | None = None,
         use_cache: bool = True,
         verbose_cb=None,
+        auto_add_macro_sinks: bool = True,
     ):
         self.repo = repo
         self.project_id = project_id
         self.source_patterns = source_patterns or DEFAULT_SOURCE_PATTERNS
         self.sink_patterns = sink_patterns or DEFAULT_SINK_PATTERNS
+        self._auto_add_macro_sinks = auto_add_macro_sinks
         self.use_cache = use_cache
         self._verbose_cb = verbose_cb or (lambda msg: None)
         self._cache_hits = 0
@@ -376,11 +378,12 @@ class TaintTracker:
             ranges = entities["ranges"]
             union_instances = entities["union_instances"]
 
-            for m in entities["macros"]:
-                macro_name = m["macro_name"]
-                macro_pat = re.compile(r"\b" + re.escape(macro_name) + r"\s*\(")
-                if not any(p.pattern == macro_pat.pattern for p in self._compiled_sinks):
-                    self._compiled_sinks.append(macro_pat)
+            if self._auto_add_macro_sinks:
+                for m in entities["macros"]:
+                    macro_name = m["macro_name"]
+                    macro_pat = re.compile(r"\b" + re.escape(macro_name) + r"\s*\(")
+                    if not any(p.pattern == macro_pat.pattern for p in self._compiled_sinks):
+                        self._compiled_sinks.append(macro_pat)
 
             for entry in entities["fnptr_table_entries"]:
                 self._fnptr_table_entries_pending = getattr(

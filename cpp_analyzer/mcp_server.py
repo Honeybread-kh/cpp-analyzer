@@ -641,22 +641,27 @@ def trace_dataflow(
 
     source_patterns = DEFAULT_SOURCE_PATTERNS
     sink_patterns = DEFAULT_SINK_PATTERNS
+    custom_patterns = False
 
     if patterns_file:
         try:
             yaml_sources, yaml_sinks = load_patterns_yaml(patterns_file)
             source_patterns = yaml_sources
             sink_patterns = yaml_sinks
+            custom_patterns = True
         except Exception as e:
             repo.close()
             return f"Error loading patterns file: {e}"
 
     if source_pattern:
         source_patterns = [{"name": "custom", "regex": source_pattern}]
+        custom_patterns = True
     if sink_pattern:
         sink_patterns = [{"name": "custom", "regex": sink_pattern}]
+        custom_patterns = True
 
-    tracker = TaintTracker(repo, pid, source_patterns, sink_patterns, use_cache=use_cache)
+    tracker = TaintTracker(repo, pid, source_patterns, sink_patterns, use_cache=use_cache,
+                           auto_add_macro_sinks=not custom_patterns)
     paths = tracker.trace(max_depth=max_depth, max_paths=max_paths)
 
     if save and paths:
@@ -758,20 +763,24 @@ def reverse_trace_dataflow(
 
     source_patterns = DEFAULT_SOURCE_PATTERNS
     sink_patterns = DEFAULT_SINK_PATTERNS
+    custom_patterns = False
 
     if patterns_file:
         try:
             yaml_sources, yaml_sinks = load_patterns_yaml(patterns_file)
             source_patterns = yaml_sources
             sink_patterns = yaml_sinks
+            custom_patterns = True
         except Exception as e:
             repo.close()
             return f"Error loading patterns file: {e}"
 
     if source_pattern:
         source_patterns = [{"name": "custom", "regex": source_pattern}]
+        custom_patterns = True
 
-    tracker = TaintTracker(repo, pid, source_patterns, sink_patterns, use_cache=use_cache)
+    tracker = TaintTracker(repo, pid, source_patterns, sink_patterns, use_cache=use_cache,
+                           auto_add_macro_sinks=not custom_patterns)
     grouped = tracker.reverse_trace(sink_pattern, max_depth=max_depth, max_paths=max_paths)
     repo.close()
 
@@ -834,22 +843,27 @@ def export_config_spec(
 
     source_patterns = DEFAULT_SOURCE_PATTERNS
     sink_patterns_list = DEFAULT_SINK_PATTERNS
+    custom_patterns = False
 
     if patterns_file:
         try:
             yaml_sources, yaml_sinks = load_patterns_yaml(patterns_file)
             source_patterns = yaml_sources
             sink_patterns_list = yaml_sinks
+            custom_patterns = True
         except Exception as e:
             repo.close()
             return f"Error loading patterns file: {e}"
 
     if source_pattern:
         source_patterns = [{"name": "custom", "regex": source_pattern}]
+        custom_patterns = True
     if sink_pattern:
         sink_patterns_list = [{"name": "custom", "regex": sink_pattern}]
+        custom_patterns = True
 
-    tracker = TaintTracker(repo, pid, source_patterns, sink_patterns_list, use_cache=use_cache)
+    tracker = TaintTracker(repo, pid, source_patterns, sink_patterns_list, use_cache=use_cache,
+                           auto_add_macro_sinks=not custom_patterns)
     paths = tracker.trace(max_depth=max_depth)
     specs = tracker.generate_config_specs(paths=paths)
 

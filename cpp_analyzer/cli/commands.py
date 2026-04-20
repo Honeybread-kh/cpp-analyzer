@@ -352,20 +352,25 @@ def trace_dataflow(db, project_id, patterns, source, sink, depth, max_paths, sav
 
     source_patterns = DEFAULT_SOURCE_PATTERNS
     sink_patterns = DEFAULT_SINK_PATTERNS
+    custom_patterns = False
 
     if patterns:
         yaml_sources, yaml_sinks = load_patterns_yaml(patterns)
         source_patterns = yaml_sources
         sink_patterns = yaml_sinks
+        custom_patterns = True
         console.print(f"[cyan]Loaded patterns: {len(yaml_sources)} sources, {len(yaml_sinks)} sinks (defaults replaced)[/cyan]")
 
     if source:
         source_patterns = [{"name": f"custom_{i}", "regex": s} for i, s in enumerate(source)]
+        custom_patterns = True
     if sink:
         sink_patterns = [{"name": f"custom_{i}", "regex": s} for i, s in enumerate(sink)]
+        custom_patterns = True
 
     tracker = TaintTracker(repo, pid, source_patterns, sink_patterns, use_cache=not no_cache,
-                           verbose_cb=console.print if verbose else None)
+                           verbose_cb=console.print if verbose else None,
+                           auto_add_macro_sinks=not custom_patterns)
 
     if reverse:
         with console.status("[bold green]Running reverse taint analysis..."):
