@@ -148,6 +148,7 @@ class TaintTracker:
         self._file_ranges: dict[str, list[dict]] = {}       # path -> range constraints
         self._file_unions: dict[str, list[dict]] = {}       # path -> union instances
         self._func_to_file: dict[str, str] = {}             # func_name -> file path
+        self._memcpy_aliases: dict[tuple[str, str], str] = {}  # (func, dst_base) -> src_base
 
     def _trace_cache_key(self, max_depth: int, max_paths: int) -> str:
         """Stable hash of the query + pattern set used for result caching."""
@@ -405,6 +406,27 @@ class TaintTracker:
             for p in params:
                 if p["function_name"]:
                     self._func_to_file[p["function_name"]] = rp
+
+        # memcpy/memmove alias detection:
+        # memcpy(&dst, &src, size) → dst is aliased to src (struct copy)
+        _memcpy_re = re.compile(
+            r'\b(?:memcpy|memmove|bcopy)\b'
+        )
+        for rp, calls in self._file_calls.items():
+            for call in calls:
+                if not _memcpy_re.search(call["callee_name"]):
+                    continue
+                args = call["args"]
+                if len(args) < 2:
+                    continue
+                dst_expr = args[0]["expression"].strip().lstrip("&").lstrip("(").rstrip(")")
+                src_expr = args[1]["expression"].strip().lstrip("&").lstrip("(").rstrip(")")
+                if dst_expr and src_expr and call["function"]:
+                    self._memcpy_aliases[(call["function"], dst_expr)] = src_expr
+                    self._verbose_cb(
+                        f"[memcpy] {call['function']}: {dst_expr} ← {src_expr} "
+                        f"({rp}:{call['line']})"
+                    )
 
         # second pass: build function-pointer alias map
         # key: (file_path, caller_function, callee_var) → target_function
@@ -727,6 +749,24 @@ class TaintTracker:
                     if lhs != resolved_var and lhs.startswith(base + "."):
                         reaching.append(a)
 
+        # memcpy alias: if dst was a memcpy target, trace from src instead
+        if not reaching:
+            src_base = self._resolve_memcpy(func_name, resolved_var)
+            if src_base:
+                chain = self._trace_backward(
+                    src_base, func_name, file_path,
+                    depth - 1, visited, before_line=before_line,
+                )
+                if chain:
+                    chain.append(TaintNode(
+                        variable=resolved_var,
+                        node_type="INTERMEDIATE",
+                        transform="memcpy",
+                        file=file_path,
+                        function=func_name,
+                    ))
+                    return chain
+
         # P5: when tracking a plain struct var `pk`, also include writes to
         # its fields `pk.b = taint` — needed for bitfield / type-punning
         # patterns where the sink reads the whole struct but taint entered
@@ -948,6 +988,24 @@ class TaintTracker:
             results.append(a)
             seen_lines.add(a["line"])
         return results
+
+    def _resolve_memcpy(self, func_name: str, var: str) -> str | None:
+        """If var's base was a memcpy destination, return the equivalent source variable.
+
+        For memcpy(&dst, &src, size):
+          dst.field → src.field
+          dst->field → src->field
+        """
+        for sep in ("->", "."):
+            if sep in var:
+                base, _, field = var.partition(sep)
+                src = self._memcpy_aliases.get((func_name, base))
+                if src:
+                    return f"{src}{sep}{field}"
+        src = self._memcpy_aliases.get((func_name, var))
+        if src:
+            return src
+        return None
 
     def _match_source(self, variable: str) -> bool:
         """Check if a variable matches any source pattern.
