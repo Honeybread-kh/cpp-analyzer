@@ -107,7 +107,7 @@ CREATE TABLE IF NOT EXISTS config_sources (
     project_id  INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     file_id     INTEGER NOT NULL REFERENCES files(id),
     symbol_id   INTEGER REFERENCES symbols(id),  -- enclosing function
-    pattern_id  INTEGER REFERENCES config_patterns(id),
+    pattern_id  INTEGER REFERENCES config_patterns(id) ON DELETE SET NULL,
     config_key  TEXT    NOT NULL,
     line        INTEGER,
     col         INTEGER,

@@ -695,6 +695,7 @@ class Repository:
 
     def sync_config_patterns(self, patterns: list[dict]) -> None:
         with self.transaction() as c:
+            c.execute("DELETE FROM config_sources WHERE pattern_id IS NOT NULL")
             c.execute("DELETE FROM config_patterns")
             for p in patterns:
                 c.execute(
