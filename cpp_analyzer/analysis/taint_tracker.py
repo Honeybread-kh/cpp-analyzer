@@ -184,6 +184,9 @@ class TaintTracker:
             except Exception:
                 cache_key = None
 
+        self._verbose_cb(f"[source] {len(self.source_patterns)} source pattern(s):")
+        for i, sp in enumerate(self.source_patterns):
+            self._verbose_cb(f"[source]   src[{i}] \"{sp.get('name', '?')}\": {sp['regex']}")
         self._load_all_files()
         sinks = self._scan_sinks()
         self._verbose_cb(f"[trace] {len(sinks)} sink(s) found, tracing backward (depth={max_depth}, max_paths={max_paths})...")
@@ -581,6 +584,8 @@ class TaintTracker:
     def _scan_sinks(self) -> list[dict]:
         """Find all assignments whose LHS matches a sink pattern."""
         self._verbose_cb(f"[scan] scanning {len(self._file_assignments)} files for sink patterns...")
+        for i, sp in enumerate(self.sink_patterns):
+            self._verbose_cb(f"[scan]   sink[{i}] \"{sp.get('name', '?')}\": {sp['regex']}")
         sinks = []
         for file_path, assignments in self._file_assignments.items():
             for a in assignments:
@@ -588,8 +593,13 @@ class TaintTracker:
                 rhs = a["rhs"]
                 full_text = f"{lhs} {a['operator']} {rhs}"
 
-                for pattern in self._compiled_sinks:
+                for idx, pattern in enumerate(self._compiled_sinks):
                     if pattern.search(lhs) or pattern.search(full_text):
+                        sp_name = self.sink_patterns[idx].get("name", "?") if idx < len(self.sink_patterns) else "?"
+                        self._verbose_cb(
+                            f"[sink] {sp_name} matched: {file_path}:{a['line']} "
+                            f"fn={a['function']}  {lhs} = {rhs}"
+                        )
                         sinks.append({
                             "lhs": lhs,
                             "sink_var": rhs,
@@ -609,6 +619,11 @@ class TaintTracker:
                     for idx, pattern in enumerate(self._compiled_sinks):
                         call_text = f"{callee}({', '.join(a['expression'] for a in call['args'])})"
                         if pattern.search(call_text):
+                            sp_name = self.sink_patterns[idx].get("name", "?") if idx < len(self.sink_patterns) else "?"
+                            self._verbose_cb(
+                                f"[sink] {sp_name} matched (call): {file_path}:{call['line']} "
+                                f"fn={call['function']}  {call_text[:80]}"
+                            )
                             rhs_args = call["args"]
                             # F1: some sinks specify which arg carries the value.
                             raw = self.sink_patterns[idx] if idx < len(self.sink_patterns) else {}
