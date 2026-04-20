@@ -684,11 +684,13 @@ def extract_fnptr_table_entries(root: Node) -> list[dict]:
     """
     results = []
 
-    def walk(node: Node, in_func: bool):
+    import re
+    stack = list(reversed(root.children))
+    while stack:
+        node = stack.pop()
         if node.type == "function_definition":
-            return  # skip function bodies
+            continue  # skip function bodies
         if node.type in ("init_declarator", "declaration"):
-            # look for `name [ ] = { ... }` pattern
             decl = None
             value = None
             if node.type == "init_declarator":
@@ -697,7 +699,6 @@ def extract_fnptr_table_entries(root: Node) -> list[dict]:
             if decl is not None and value is not None and value.type == "initializer_list":
                 array_name = None
                 d = decl
-                # unwrap array_declarator / pointer_declarator
                 while d is not None:
                     if d.type == "identifier":
                         array_name = node_text(d).strip()
@@ -712,8 +713,6 @@ def extract_fnptr_table_entries(root: Node) -> list[dict]:
                         if val is not None:
                             expr = node_text(val).strip().lstrip("&")
                             if re.fullmatch(r'[A-Za-z_]\w*', expr):
-                                # capture designator (e.g. `.write` for struct
-                                # designated init) for struct-ops dispatch.
                                 member = None
                                 for d in walk_type(pair, "field_designator"):
                                     member = node_text(d).lstrip(".").strip()
@@ -723,7 +722,6 @@ def extract_fnptr_table_entries(root: Node) -> list[dict]:
                                     "callee": expr,
                                     "member": member,
                                 })
-                    # positional entries: direct identifiers in the list
                     for child in value.named_children:
                         if child.type == "identifier":
                             expr = node_text(child).strip()
@@ -733,11 +731,7 @@ def extract_fnptr_table_entries(root: Node) -> list[dict]:
                                     "callee": expr,
                                     "member": None,
                                 })
-        for c in node.children:
-            walk(c, in_func)
-
-    import re
-    walk(root, False)
+        stack.extend(reversed(node.children))
     return results
 
 
