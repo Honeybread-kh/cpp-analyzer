@@ -55,18 +55,22 @@ def node_text(node: Node) -> str:
 
 
 def walk_type(root: Node, node_type: str) -> Iterator[Node]:
-    """Yield all descendant nodes of given type."""
-    for child in root.children:
-        if child.type == node_type:
-            yield child
-        yield from walk_type(child, node_type)
+    """Yield all descendant nodes of given type (iterative to avoid RecursionError)."""
+    stack = list(reversed(root.children))
+    while stack:
+        node = stack.pop()
+        if node.type == node_type:
+            yield node
+        stack.extend(reversed(node.children))
 
 
 def walk_named(root: Node) -> Iterator[Node]:
-    """Yield all named descendant nodes recursively."""
-    for child in root.named_children:
-        yield child
-        yield from walk_named(child)
+    """Yield all named descendant nodes (iterative to avoid RecursionError)."""
+    stack = list(reversed(root.named_children))
+    while stack:
+        node = stack.pop()
+        yield node
+        stack.extend(reversed(node.named_children))
 
 
 # ── struct field extraction ─────────────────────────────────────────────────
