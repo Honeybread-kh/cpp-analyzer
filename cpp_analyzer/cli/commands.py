@@ -854,3 +854,47 @@ def _render_dep_tree_node(node: FileNode, rich_parent):
             f"[cyan]{child.relative_path}[/cyan]"
         )
         _render_dep_tree_node(child, branch)
+
+
+# ── notify ───────────────────────────────────────────────────────────────────
+
+@cli.group()
+def notify():
+    """Send notifications (e.g. analysis summary to Telegram)."""
+
+
+@notify.command("telegram")
+@click.option("--db",          default=DEFAULT_DB, show_default=True)
+@click.option("--project-id",  default=None, type=int)
+@click.option("--token",       default=None, help="Telegram bot token (env: TELEGRAM_BOT_TOKEN)")
+@click.option("--chat-id",     default=None, help="Telegram chat ID (env: TELEGRAM_CHAT_ID)")
+def notify_telegram(db, project_id, token, chat_id):
+    """Send project analysis summary to a Telegram chat."""
+    import os
+    from ..plugins.telegram import TelegramNotifier, format_report
+
+    token   = token   or os.environ.get("TELEGRAM_BOT_TOKEN")
+    chat_id = chat_id or os.environ.get("TELEGRAM_CHAT_ID")
+
+    if not token:
+        console.print("[red]Telegram bot token required (--token or TELEGRAM_BOT_TOKEN env).[/red]")
+        sys.exit(1)
+    if not chat_id:
+        console.print("[red]Telegram chat ID required (--chat-id or TELEGRAM_CHAT_ID env).[/red]")
+        sys.exit(1)
+
+    repo = _get_repo(db)
+    pid  = _resolve_project(repo, project_id)
+    p    = repo.get_project(pid)
+    s    = repo.stats(pid)
+    repo.close()
+
+    project_name = p["name"] if p else f"project#{pid}"
+    text = format_report(project_name, s)
+
+    notifier = TelegramNotifier(token, chat_id)
+    if notifier.send(text):
+        console.print("[green]Notification sent to Telegram.[/green]")
+    else:
+        console.print("[red]Failed to send Telegram notification.[/red]")
+        sys.exit(1)

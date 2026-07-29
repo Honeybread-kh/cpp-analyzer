@@ -1037,6 +1037,63 @@ def dependency_stats(
     return "\n".join(lines)
 
 
+# ── notification tools ────────────────────────────────────────────────────────
+
+@mcp.tool()
+def notify_telegram(
+    token: str | None = None,
+    chat_id: str | None = None,
+    db_path: str | None = None,
+    project_id: int | None = None,
+    message: str | None = None,
+) -> str:
+    """
+    Send a notification to a Telegram chat.
+
+    If 'message' is provided, sends it directly (no DB access required).
+    Otherwise, fetches project stats and sends a formatted summary.
+
+    Args:
+        token:      Telegram bot token (fallback: TELEGRAM_BOT_TOKEN env).
+        chat_id:    Telegram chat ID (fallback: TELEGRAM_CHAT_ID env).
+        db_path:    SQLite DB path (default: cpp_analysis.db).
+        project_id: Project ID (default: first project).
+        message:    Custom message to send (optional).
+    """
+    from .plugins.telegram import TelegramNotifier, format_report
+
+    token   = token   or os.environ.get("TELEGRAM_BOT_TOKEN")
+    chat_id = chat_id or os.environ.get("TELEGRAM_CHAT_ID")
+
+    if not token:
+        return "ERROR: Telegram bot token required (token arg or TELEGRAM_BOT_TOKEN env)."
+    if not chat_id:
+        return "ERROR: Telegram chat ID required (chat_id arg or TELEGRAM_CHAT_ID env)."
+
+    notifier = TelegramNotifier(token, chat_id)
+
+    if message is not None:
+        ok = notifier.send(message)
+        return "Notification sent." if ok else "ERROR: Failed to send Telegram notification."
+
+    db  = _default_db(db_path)
+    repo = _repo(db)
+    pid  = _resolve_project_id(repo, project_id)
+    if pid is None:
+        repo.close()
+        return "No project found. Run index_project first."
+
+    p = repo.get_project(pid)
+    s = repo.stats(pid)
+    repo.close()
+
+    project_name = p["name"] if p else f"project#{pid}"
+    text = format_report(project_name, s)
+
+    ok = notifier.send(text)
+    return "Notification sent." if ok else "ERROR: Failed to send Telegram notification."
+
+
 # ── entry point ───────────────────────────────────────────────────────────────
 
 def main():
